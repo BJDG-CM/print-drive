@@ -463,15 +463,13 @@
             updateSelection();
         }
 
-        async function downloadSingleFile(url, filename) {
-            try {
-                const response = await fetch(url);
-                const blob = await response.blob();
-                saveAs(blob, filename);
-            } catch (e) {
-                console.error(e);
-                alert('다운로드 중 오류가 발생했습니다.');
-            }
+        function downloadSingleFile(url, filename) {
+            const a = document.createElement('a');
+            a.href = `files/${filename}`;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
         }
 
         async function downloadSelectedAsZip() {
