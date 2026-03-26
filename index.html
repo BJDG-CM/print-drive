@@ -5,125 +5,512 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Print Drive</title>
+    <!-- ZIP 압축 및 파일 저장을 위한 외부 라이브러리 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <!-- 트렌디한 폰트 적용 -->
+    <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css" rel="stylesheet">
     <style>
+        :root {
+            --primary: #4F46E5;
+            --primary-hover: #4338CA;
+            --surface: #ffffff;
+            --background: #f3f4f6;
+            --text-main: #111827;
+            --text-muted: #6B7280;
+            --border: #E5E7EB;
+        }
+
+        * {
+            box-sizing: border-box;
+            font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             margin: 0;
             padding: 0;
-            background-color: #f4f7f6;
-            color: #333;
+            background: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%);
+            min-height: 100vh;
             display: flex;
             justify-content: center;
             align-items: center;
-            min-height: 100vh;
+            color: var(--text-main);
         }
 
         .container {
-            background: white;
-            padding: 2rem;
-            border-radius: 8px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 2.5rem;
+            border-radius: 20px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.05), 0 20px 48px rgba(0, 0, 0, 0.05);
             width: 100%;
-            max-width: 600px;
+            max-width: 700px;
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border);
         }
 
         h1 {
-            margin-top: 0;
-            color: #2c3e50;
-            border-bottom: 2px solid #eee;
-            padding-bottom: 0.5rem;
+            margin: 0;
+            font-size: 1.8rem;
+            font-weight: 700;
+            background: linear-gradient(to right, #4F46E5, #ec4899);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .action-bar {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        button {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            padding: 0.6rem 1.2rem;
+            border-radius: 8px;
+            font-weight: 500;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 4px 6px rgba(79, 70, 229, 0.2);
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        button:hover:not(:disabled) {
+            background-color: var(--primary-hover);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(79, 70, 229, 0.3);
+        }
+
+        button:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        button.secondary {
+            background-color: white;
+            color: var(--text-main);
+            border: 1px solid var(--border);
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+        }
+
+        button.secondary:hover:not(:disabled) {
+            background-color: #f9fafb;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+            box-shadow: none;
         }
 
         #file-list {
             list-style: none;
             padding: 0;
+            margin: 0;
+            max-height: 400px;
+            overflow-y: auto;
         }
 
-        #file-list li {
-            margin: 0.5rem 0;
+        .file-item {
+            display: flex;
+            align-items: center;
+            padding: 1rem;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            margin-bottom: 0.75rem;
+            background: white;
+            transition: all 0.2s;
+            cursor: pointer;
         }
 
-        #file-list a {
-            display: block;
-            padding: 0.75rem 1rem;
-            background-color: #e9ecef;
-            color: #007bff;
+        .file-item:hover {
+            border-color: var(--primary);
+            box-shadow: 0 4px 12px rgba(79, 70, 229, 0.08);
+            transform: translateX(4px);
+        }
+
+        .file-item.selected {
+            background-color: #f5f3ff;
+            border-color: var(--primary);
+        }
+
+        .file-checkbox {
+            margin-right: 1.2rem;
+            width: 1.3rem;
+            height: 1.3rem;
+            accent-color: var(--primary);
+            cursor: pointer;
+        }
+
+        .file-info {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .file-name {
+            font-weight: 600;
+            font-size: 1.05rem;
+            color: var(--text-main);
             text-decoration: none;
-            border-radius: 4px;
-            transition: background-color 0.2s, color 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
         }
 
-        #file-list a:hover {
-            background-color: #007bff;
-            color: white;
+        .file-name:hover {
+            color: var(--primary);
+            text-decoration: underline;
         }
 
-        .error {
-            color: #dc3545;
-            font-weight: bold;
+        .file-meta {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-top: 0.3rem;
+        }
+
+        .download-btn {
+            padding: 0.4rem 0.8rem;
+            font-size: 0.85rem;
+            border-radius: 6px;
+            box-shadow: none;
+        }
+
+        .spinner {
+            display: none;
+            border: 3px solid rgba(79, 70, 229, 0.2);
+            border-top: 3px solid var(--primary);
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(4px);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            border-radius: 20px;
+            z-index: 10;
+            display: none;
+        }
+
+        .loading-overlay .spinner {
+            display: block;
+            width: 50px;
+            height: 50px;
+            border-width: 4px;
+            margin-bottom: 1.5rem;
+        }
+
+        .loading-text {
+            font-weight: 600;
+            font-size: 1.1rem;
+            color: var(--primary);
+        }
+
+        #error-content {
             text-align: center;
-            font-size: 1.2rem;
+            padding: 3rem 2rem;
+        }
+
+        .error-icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+            animation: shake 0.5s;
+        }
+
+        @keyframes shake {
+
+            0%,
+            100% {
+                transform: translateX(0);
+            }
+
+            25% {
+                transform: translateX(-5px);
+            }
+
+            50% {
+                transform: translateX(5px);
+            }
+
+            75% {
+                transform: translateX(-5px);
+            }
+        }
+
+        /* Scrollbar styles */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
         }
     </style>
 </head>
 
 <body>
+    <div class="container" id="loading-container"
+        style="display: none; justify-content: center; align-items: center; height: 300px;">
+        <div style="text-align: center;">
+            <div class="spinner" style="display: inline-block; width: 40px; height: 40px; margin-bottom: 1rem;"></div>
+            <div style="font-weight: 500; color: var(--text-muted); font-size: 1.1rem;">보안 검사 및 파일 로딩 중...</div>
+        </div>
+    </div>
+
     <div class="container" id="app-content" style="display: none;">
-        <h1>Print Drive Files</h1>
+        <div class="loading-overlay" id="global-loader">
+            <div class="spinner"></div>
+            <div class="loading-text" id="loading-message">압축 중입니다...</div>
+        </div>
+
+        <div class="header">
+            <h1>✨ Print Drive</h1>
+            <span id="file-count" style="color: var(--text-muted); font-weight: 500;">0 개 파일</span>
+        </div>
+
+        <div class="action-bar">
+            <button class="secondary" onclick="toggleSelectAll()" id="btn-select-all">
+                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+                전체 선택
+            </button>
+            <button onclick="downloadSelectedAsZip()" id="btn-download-selected" disabled>
+                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                </svg>
+                선택 항목을 압축(ZIP)하여 다운로드
+            </button>
+        </div>
+
         <ul id="file-list">
-            <li>Loading files...</li>
         </ul>
     </div>
+
     <div class="container" id="error-content" style="display: none;">
-        <p class="error">Access Denied</p>
+        <div class="error-icon">🚷</div>
+        <h2 style="margin-top:0; color:#dc2626;">접근 거부</h2>
+        <p style="color:var(--text-muted); font-size: 1.1rem;">비밀번호가 올바르지 않습니다.</p>
+        <button onclick="location.reload()"
+            style="margin: 2rem auto 0; display: flex; width: 120px; justify-content: center;">다시 시도</button>
     </div>
 
     <script>
-        const password = prompt("비밀번호를 입력하세요:");
+        const REPO_OWNER = 'BJDG-CM';
+        const REPO_NAME = 'print-drive';
+        let allFiles = [];
+        let isAllSelected = false;
 
-        if (password === "0318") {
-            document.getElementById('app-content').style.display = 'block';
-            fetchFiles();
-        } else {
-            document.getElementById('error-content').style.display = 'block';
-        }
+        // Auth
+        window.onload = () => {
+            document.body.style.display = 'none';
+            const password = prompt("비밀번호를 입력하세요 (0318):");
+            document.body.style.display = 'flex';
+
+            if (password === "0318") {
+                document.getElementById('loading-container').style.display = 'flex';
+                fetchFiles();
+            } else {
+                document.getElementById('error-content').style.display = 'block';
+            }
+        };
 
         async function fetchFiles() {
-            const repoOwner = 'BJDG-CM';
-            const repoName = 'print-drive';
-            const apiUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/contents/files/`;
+            const apiUrl = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/files/`;
             const fileList = document.getElementById('file-list');
 
             try {
                 const response = await fetch(apiUrl);
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
+                if (!response.ok) throw new Error('API 로드 실패');
+
                 const data = await response.json();
 
-                fileList.innerHTML = ''; // Clear loading text
+                allFiles = data.filter(file => !file.name.startsWith('.') && !file.name.endsWith('.html'));
 
-                const filteredFiles = data.filter(file => {
-                    return !file.name.startsWith('.') && !file.name.endsWith('.html');
-                });
+                document.getElementById('loading-container').style.display = 'none';
+                document.getElementById('app-content').style.display = 'block';
 
-                if (filteredFiles.length === 0) {
-                    fileList.innerHTML = '<li>No files available.</li>';
+                document.getElementById('file-count').textContent = `${allFiles.length} 개의 파일`;
+                fileList.innerHTML = '';
+
+                if (allFiles.length === 0) {
+                    fileList.innerHTML = `
+                        <li style="text-align:center; padding: 3rem 1rem; color: #9ca3af; display:flex; flex-direction:column; align-items:center;">
+                            <svg width="48" height="48" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="margin-bottom:1rem; opacity:0.5;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"></path></svg>
+                            현재 업로드 된 파일이 없습니다.
+                        </li>`;
                     return;
                 }
 
-                filteredFiles.forEach(file => {
+                allFiles.forEach((file, index) => {
                     const li = document.createElement('li');
-                    const a = document.createElement('a');
-                    a.href = `https://${repoOwner}.github.io/${repoName}/files/${file.name}`;
-                    a.target = "_blank";
-                    a.textContent = file.name;
-                    li.appendChild(a);
+                    li.className = 'file-item';
+                    li.onclick = (e) => {
+                        if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'BUTTON' && !e.target.closest('.download-btn') && e.target.tagName !== 'A') {
+                            const cb = document.getElementById(`cb-${index}`);
+                            cb.checked = !cb.checked;
+                            updateSelection();
+                        }
+                    };
+
+                    const sizeInKB = (file.size / 1024).toFixed(1);
+
+                    li.innerHTML = `
+                        <input type="checkbox" class="file-checkbox" id="cb-${index}" value="${file.download_url}" data-name="${file.name}" onchange="updateSelection()">
+                        <div class="file-info">
+                            <a href="https://${REPO_OWNER}.github.io/${REPO_NAME}/files/${file.name}" class="file-name" target="_blank">
+                                📄 ${file.name}
+                            </a>
+                            <span class="file-meta">파일 크기: ${sizeInKB} KB</span>
+                        </div>
+                        <button class="download-btn secondary" onclick="downloadSingleFile('${file.download_url}', '${file.name}'); event.stopPropagation();">
+                            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                            받기
+                        </button>
+                    `;
                     fileList.appendChild(li);
                 });
             } catch (error) {
-                console.error("Error fetching files:", error);
-                fileList.innerHTML = '<li class="error">Failed to load files. Please try again later.</li>';
+                console.error(error);
+                document.getElementById('loading-container').style.display = 'none';
+                document.getElementById('app-content').style.display = 'block';
+                fileList.innerHTML = `
+                    <li style="text-align:center; padding: 2rem; color: #dc2626;">
+                        ⚠️ 파일을 불러오는 데 실패했습니다.<br>잠시 후 새로고침 해주세요.
+                    </li>`;
+            }
+        }
+
+        function updateSelection() {
+            const checkboxes = document.querySelectorAll('.file-checkbox');
+            const checkedBoxes = Array.from(checkboxes).filter(cb => cb.checked);
+            const checkedCount = checkedBoxes.length;
+            const btn = document.getElementById('btn-download-selected');
+
+            btn.disabled = checkedCount === 0;
+            if (checkedCount > 0) {
+                btn.innerHTML = `<svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg> 선택한 ${checkedCount}개 압축 다운로드`;
+            } else {
+                btn.innerHTML = `<svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg> 선택 항목을 압축(ZIP)하여 다운로드`;
+            }
+
+            checkboxes.forEach(cb => {
+                const item = cb.closest('.file-item');
+                if (cb.checked) item.classList.add('selected');
+                else item.classList.remove('selected');
+            });
+
+            isAllSelected = checkedCount === checkboxes.length && checkboxes.length > 0;
+            document.getElementById('btn-select-all').innerHTML = isAllSelected
+                ? `<svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg> 선택 해제`
+                : `<svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> 전체 선택`;
+        }
+
+        function toggleSelectAll() {
+            const checkboxes = document.querySelectorAll('.file-checkbox');
+            checkboxes.forEach(cb => {
+                cb.checked = !isAllSelected;
+            });
+            updateSelection();
+        }
+
+        async function downloadSingleFile(url, filename) {
+            try {
+                const response = await fetch(url);
+                const blob = await response.blob();
+                saveAs(blob, filename);
+            } catch (e) {
+                console.error(e);
+                alert('다운로드 중 오류가 발생했습니다.');
+            }
+        }
+
+        async function downloadSelectedAsZip() {
+            const checkboxes = document.querySelectorAll('.file-checkbox:checked');
+            if (checkboxes.length === 0) return;
+
+            const loader = document.getElementById('global-loader');
+            const msg = document.getElementById('loading-message');
+            loader.style.display = 'flex';
+            msg.textContent = '🚀 파일을 하나로 묶어 압축 포장하는 중입니다...';
+
+            try {
+                const zip = new JSZip();
+                const folderName = "Print_Drive_Download_Files";
+                const folder = zip.folder(folderName);
+
+                for (let i = 0; i < checkboxes.length; i++) {
+                    const cb = checkboxes[i];
+                    const url = cb.value;
+                    const name = cb.getAttribute('data-name');
+
+                    msg.textContent = `🚀 [ ${i + 1} / ${checkboxes.length} ] 파일을 내려받는 중...`;
+
+                    const response = await fetch(url);
+                    const blob = await response.blob();
+                    folder.file(name, blob);
+                }
+
+                msg.textContent = '🎉 거의 다 되었습니다! ZIP 압축파일 생성 중...';
+
+                const content = await zip.generateAsync({ type: "blob" });
+                saveAs(content, folderName + ".zip");
+
+                toggleSelectAll();
+            } catch (e) {
+                console.error(e);
+                alert('ZIP 파일 압축 중 오류가 발생했습니다 ㅠㅠ 인터넷 연결을 확인해주세요.');
+            } finally {
+                loader.style.display = 'none';
             }
         }
     </script>
