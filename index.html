@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Print Drive</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f4f7f6;
+            color: #333;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .container {
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 600px;
+        }
+
+        h1 {
+            margin-top: 0;
+            color: #2c3e50;
+            border-bottom: 2px solid #eee;
+            padding-bottom: 0.5rem;
+        }
+
+        #file-list {
+            list-style: none;
+            padding: 0;
+        }
+
+        #file-list li {
+            margin: 0.5rem 0;
+        }
+
+        #file-list a {
+            display: block;
+            padding: 0.75rem 1rem;
+            background-color: #e9ecef;
+            color: #007bff;
+            text-decoration: none;
+            border-radius: 4px;
+            transition: background-color 0.2s, color 0.2s;
+        }
+
+        #file-list a:hover {
+            background-color: #007bff;
+            color: white;
+        }
+
+        .error {
+            color: #dc3545;
+            font-weight: bold;
+            text-align: center;
+            font-size: 1.2rem;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container" id="app-content" style="display: none;">
+        <h1>Print Drive Files</h1>
+        <ul id="file-list">
+            <li>Loading files...</li>
+        </ul>
+    </div>
+    <div class="container" id="error-content" style="display: none;">
+        <p class="error">Access Denied</p>
+    </div>
+
+    <script>
+        const password = prompt("비밀번호를 입력하세요:");
+
+        if (password === "0318") {
+            document.getElementById('app-content').style.display = 'block';
+            fetchFiles();
+        } else {
+            document.getElementById('error-content').style.display = 'block';
+        }
+
+        async function fetchFiles() {
+            const repoOwner = 'BJDG-CM';
+            const repoName = 'print-drive';
+            const apiUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/contents/files/`;
+            const fileList = document.getElementById('file-list');
+
+            try {
+                const response = await fetch(apiUrl);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+
+                fileList.innerHTML = ''; // Clear loading text
+
+                const filteredFiles = data.filter(file => {
+                    return !file.name.startsWith('.') && !file.name.endsWith('.html');
+                });
+
+                if (filteredFiles.length === 0) {
+                    fileList.innerHTML = '<li>No files available.</li>';
+                    return;
+                }
+
+                filteredFiles.forEach(file => {
+                    const li = document.createElement('li');
+                    const a = document.createElement('a');
+                    a.href = `https://${repoOwner}.github.io/${repoName}/files/${file.name}`;
+                    a.target = "_blank";
+                    a.textContent = file.name;
+                    li.appendChild(a);
+                    fileList.appendChild(li);
+                });
+            } catch (error) {
+                console.error("Error fetching files:", error);
+                fileList.innerHTML = '<li class="error">Failed to load files. Please try again later.</li>';
+            }
+        }
+    </script>
+</body>
+
+</html>
