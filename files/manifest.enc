@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "app": "print-drive",
+  "crypto": {
+    "kdf": {
+      "name": "PBKDF2",
+      "hash": "SHA-256",
+      "iterations": 650000,
+      "salt": "RFSH5W1DpNrzYUzJMEAjSVXc0UFdRZjV8LkbcCzRt4Q="
+    },
+    "cipher": {
+      "name": "AES-GCM",
+      "keyLength": 256,
+      "ivLength": 12,
+      "tagLength": 128
+    },
+    "padding": {
+      "blockSize": 65536
+    }
+  },
+  "manifest": {
+    "iv": "S2qu67exp9n6/uuG",
+    "data": "OL9fBL3qbjF6/Mw9eEaIx82M/ouYl/4qhqaZGYZSphEdQ3+zHSypeyYsfNDXHHpjsjBQDGoVcKv2LtjEoIWWfUuzg6dDQi7IMGFupde7Vg=="
+  }
+}
