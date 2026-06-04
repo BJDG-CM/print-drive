@@ -50,6 +50,22 @@ git push
 
 4. 페이지에서 같은 비밀번호를 입력하고 파일을 내려받습니다.
 
+## 비밀번호 변경
+
+가장 쉬운 방법:
+
+```powershell
+node set_password.mjs 0907
+```
+
+명령을 실행하면 `.print-drive-passphrase`가 바뀌고 `files/`의 암호화 결과도 새 비밀번호로 다시 생성됩니다. 배포하려면 이후 아래처럼 올립니다.
+
+```powershell
+git add files/
+git commit -m "Update encrypted print files"
+git push
+```
+
 ## 자동 동기화
 
 `auto_sync.py`는 `private_files/`와 `files/`를 감시합니다.
