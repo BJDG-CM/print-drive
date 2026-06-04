@@ -66,6 +66,8 @@ git commit -m "Update encrypted print files"
 git push
 ```
 
+이미 열려 있던 브라우저 탭은 예전 세션 키를 들고 있을 수 있으므로, 배포 후 비밀번호를 다시 입력하면 됩니다.
+
 ## 자동 동기화
 
 `auto_sync.py`는 `private_files/`와 `files/`를 감시합니다.

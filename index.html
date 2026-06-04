@@ -1034,6 +1034,11 @@
                     throw error;
                 }
 
+                if (shouldAskForFreshPassword(error)) {
+                    promptForFreshPassword();
+                    return;
+                }
+
                 console.error(error);
                 renderErrorState(error);
                 showToast('파일 목록을 열지 못했습니다.', 'error');
@@ -1063,6 +1068,23 @@
             manifestEnvelope = await response.json();
             validateManifestEnvelope(manifestEnvelope);
             return manifestEnvelope;
+        }
+
+        function shouldAskForFreshPassword(error) {
+            return error?.name === 'OperationError';
+        }
+
+        function promptForFreshPassword() {
+            console.info('Current session key could not unlock the latest manifest.');
+            sessionStorage.removeItem(SESSION_KEY);
+            decryptKey = null;
+            selectedIds.clear();
+            isSelectionMode = false;
+            dom.appView.classList.remove('selection-mode');
+            dom.passwordInput.value = '';
+            showView(dom.authView);
+            showAuthError('파일 목록이 새로 바뀌었습니다. 비밀번호를 다시 입력해 주세요.');
+            dom.passwordInput.focus();
         }
 
         function validateManifestEnvelope(envelope) {
