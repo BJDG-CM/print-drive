@@ -4,512 +4,1722 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#2563eb">
     <title>Print Drive</title>
-    <!-- ZIP 압축 및 파일 저장을 위한 외부 라이브러리 -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
-    <!-- 트렌디한 폰트 적용 -->
-    <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css" rel="stylesheet">
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" href="icon.svg" type="image/svg+xml">
     <style>
         :root {
-            --primary: #4F46E5;
-            --primary-hover: #4338CA;
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --accent: #0f766e;
+            --danger: #dc2626;
+            --warning: #d97706;
             --surface: #ffffff;
-            --background: #f3f4f6;
+            --surface-muted: #f8fafc;
+            --background: #eef2f7;
             --text-main: #111827;
-            --text-muted: #6B7280;
-            --border: #E5E7EB;
+            --text-muted: #64748b;
+            --border: #dbe3ef;
+            --selected: #eff6ff;
+            --shadow: 0 18px 60px rgba(15, 23, 42, 0.12);
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --primary: #60a5fa;
+                --primary-hover: #93c5fd;
+                --accent: #2dd4bf;
+                --danger: #f87171;
+                --warning: #fbbf24;
+                --surface: #111827;
+                --surface-muted: #1f2937;
+                --background: #020617;
+                --text-main: #f8fafc;
+                --text-muted: #94a3b8;
+                --border: #334155;
+                --selected: #172554;
+                --shadow: 0 18px 60px rgba(0, 0, 0, 0.35);
+            }
         }
 
         * {
             box-sizing: border-box;
-            font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+
+        [hidden] {
+            display: none !important;
+        }
+
+        html {
+            min-height: 100%;
         }
 
         body {
-            margin: 0;
-            padding: 0;
-            background: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%);
             min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            color: var(--text-main);
-        }
-
-        .container {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(10px);
-            padding: 2.5rem;
-            border-radius: 20px;
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.05), 0 20px 48px rgba(0, 0, 0, 0.05);
-            width: 100%;
-            max-width: 700px;
-            border: 1px solid rgba(255, 255, 255, 0.5);
-            transition: all 0.3s ease;
-            position: relative;
-        }
-
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 2rem;
-            padding-bottom: 1rem;
-            border-bottom: 1px solid var(--border);
-        }
-
-        h1 {
+            min-height: 100dvh;
             margin: 0;
-            font-size: 1.8rem;
-            font-weight: 700;
-            background: linear-gradient(to right, #4F46E5, #ec4899);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+            padding: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-main);
+            background:
+                radial-gradient(circle at top left, rgba(20, 184, 166, 0.16), transparent 32rem),
+                linear-gradient(135deg, #f8fafc 0%, var(--background) 100%);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+            line-height: 1.5;
         }
 
-        .action-bar {
-            display: flex;
-            gap: 0.5rem;
-            margin-bottom: 1.5rem;
-            flex-wrap: wrap;
+        button,
+        input,
+        select {
+            min-height: 44px;
+            font: inherit;
         }
 
         button {
-            background-color: var(--primary);
-            color: white;
-            border: none;
-            padding: 0.6rem 1.2rem;
-            border-radius: 8px;
-            font-weight: 500;
-            font-size: 0.95rem;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            box-shadow: 0 4px 6px rgba(79, 70, 229, 0.2);
-            display: flex;
+            display: inline-flex;
             align-items: center;
-            gap: 0.4rem;
+            justify-content: center;
+            gap: 0.45rem;
+            border: 0;
+            border-radius: 8px;
+            padding: 0.62rem 1rem;
+            color: #ffffff;
+            background: var(--primary);
+            font-weight: 700;
+            cursor: pointer;
+            transition: background 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+            box-shadow: 0 8px 18px rgba(37, 99, 235, 0.22);
+            white-space: nowrap;
         }
 
         button:hover:not(:disabled) {
-            background-color: var(--primary-hover);
-            transform: translateY(-2px);
-            box-shadow: 0 6px 12px rgba(79, 70, 229, 0.3);
+            background: var(--primary-hover);
+            transform: translateY(-1px);
         }
 
         button:active:not(:disabled) {
             transform: translateY(0);
         }
 
-        button.secondary {
-            background-color: white;
-            color: var(--text-main);
-            border: 1px solid var(--border);
-            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-        }
-
-        button.secondary:hover:not(:disabled) {
-            background-color: #f9fafb;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-        }
-
         button:disabled {
-            opacity: 0.5;
             cursor: not-allowed;
-            transform: none !important;
+            opacity: 0.52;
             box-shadow: none;
         }
 
-        #file-list {
-            list-style: none;
-            padding: 0;
+        button.secondary {
+            color: var(--text-main);
+            background: var(--surface);
+            border: 1px solid var(--border);
+            box-shadow: none;
+        }
+
+        button.secondary:hover:not(:disabled) {
+            background: var(--surface-muted);
+        }
+
+        .container {
+            width: min(100%, 820px);
+            max-height: calc(100dvh - 48px);
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            overflow: hidden;
+            padding: 2rem;
+            border: 1px solid rgba(255, 255, 255, 0.64);
+            border-radius: 8px;
+            background: color-mix(in srgb, var(--surface) 94%, transparent);
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(12px);
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+            min-width: 0;
+        }
+
+        .brand-mark {
+            width: 44px;
+            height: 44px;
+            display: inline-grid;
+            place-items: center;
+            flex: 0 0 auto;
+            border-radius: 8px;
+            color: #ffffff;
+            background: linear-gradient(135deg, var(--primary), var(--accent));
+            font-weight: 800;
+        }
+
+        h1,
+        h2,
+        p {
             margin: 0;
-            max-height: 400px;
+        }
+
+        h1 {
+            font-size: clamp(1.5rem, 3vw, 2rem);
+            line-height: 1.15;
+        }
+
+        h2 {
+            font-size: 1.15rem;
+        }
+
+        .subtle {
+            color: var(--text-muted);
+        }
+
+        .auth-view,
+        .state-view {
+            display: grid;
+            gap: 1.4rem;
+            justify-items: center;
+            text-align: center;
+            padding: 2rem 0;
+        }
+
+        .auth-copy {
+            max-width: 34rem;
+            color: var(--text-muted);
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        .password-form {
+            width: min(100%, 440px);
+            display: grid;
+            gap: 0.75rem;
+            text-align: left;
+        }
+
+        .password-form label,
+        .remember-row {
+            font-weight: 700;
+            color: var(--text-main);
+        }
+
+        .password-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 0.6rem;
+        }
+
+        .remember-row {
+            display: flex;
+            align-items: center;
+            gap: 0.55rem;
+            color: var(--text-muted);
+            font-size: 0.92rem;
+        }
+
+        .remember-row input {
+            width: 18px;
+            min-height: 18px;
+            height: 18px;
+            accent-color: var(--primary);
+        }
+
+        input,
+        select {
+            width: 100%;
+            min-width: 0;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0.65rem 0.8rem;
+            color: var(--text-main);
+            background: var(--surface);
+            outline: none;
+        }
+
+        input:focus,
+        select:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 22%, transparent);
+        }
+
+        .form-message {
+            min-height: 1.25rem;
+            color: var(--danger);
+            font-size: 0.92rem;
+            font-weight: 600;
+        }
+
+        #app-view {
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        #app-view[hidden] {
+            display: none;
+        }
+
+        .header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 1rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .title-block {
+            display: grid;
+            gap: 0.35rem;
+            min-width: 0;
+        }
+
+        .title-block .subtle {
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 0.55rem;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+
+        .controls {
+            display: grid;
+            gap: 0.75rem;
+        }
+
+        .search-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(8.5rem, auto) minmax(9rem, auto);
+            gap: 0.65rem;
+        }
+
+        .meta-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+            color: var(--text-muted);
+            font-size: 0.92rem;
+        }
+
+        .filename-hint {
+            color: var(--text-muted);
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        .security-note {
+            color: var(--accent);
+            font-weight: 800;
+        }
+
+        .selection-count {
+            color: var(--accent);
+            font-weight: 800;
+        }
+
+        .action-bar {
+            display: flex;
+            gap: 0.55rem;
+            flex-wrap: wrap;
+        }
+
+        .btn-icon {
+            width: 18px;
+            height: 18px;
+            flex: 0 0 auto;
+        }
+
+        #file-list {
+            min-height: 0;
+            max-height: min(58dvh, 540px);
             overflow-y: auto;
+            list-style: none;
+            padding: 0.15rem 0.2rem 0.15rem 0;
+            margin: 0;
         }
 
         .file-item {
-            display: flex;
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr) auto;
+            gap: 0.9rem;
             align-items: center;
-            padding: 1rem;
+            padding: 0.95rem;
+            margin-bottom: 0.7rem;
             border: 1px solid var(--border);
-            border-radius: 12px;
-            margin-bottom: 0.75rem;
-            background: white;
-            transition: all 0.2s;
+            border-radius: 8px;
+            background: var(--surface);
             cursor: pointer;
+            transition: border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
         }
 
         .file-item:hover {
             border-color: var(--primary);
-            box-shadow: 0 4px 12px rgba(79, 70, 229, 0.08);
-            transform: translateX(4px);
+            box-shadow: 0 8px 22px rgba(37, 99, 235, 0.08);
         }
 
         .file-item.selected {
-            background-color: #f5f3ff;
             border-color: var(--primary);
+            background: var(--selected);
         }
 
         .file-checkbox {
-            margin-right: 1.2rem;
-            width: 1.3rem;
-            height: 1.3rem;
+            width: 22px;
+            height: 22px;
             accent-color: var(--primary);
             cursor: pointer;
         }
 
         .file-info {
-            flex-grow: 1;
-            display: flex;
-            flex-direction: column;
+            min-width: 0;
+            display: grid;
+            gap: 0.25rem;
         }
 
-        .file-name {
-            font-weight: 600;
-            font-size: 1.05rem;
-            color: var(--text-main);
-            text-decoration: none;
+        .file-name-line {
             display: flex;
-            align-items: center;
+            align-items: flex-start;
             gap: 0.5rem;
+            min-width: 0;
         }
 
-        .file-name:hover {
+        .file-type-icon {
+            width: 1.6rem;
+            flex: 0 0 auto;
+            font-size: 1.2rem;
+            line-height: 1.35;
+            text-align: center;
+        }
+
+        .file-name-link {
+            min-width: 0;
+            color: var(--text-main);
+            font-size: 1.02rem;
+            font-weight: 800;
+            text-decoration: none;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        .file-name-link:hover {
             color: var(--primary);
             text-decoration: underline;
         }
 
         .file-meta {
-            font-size: 0.85rem;
             color: var(--text-muted);
-            margin-top: 0.3rem;
+            font-size: 0.88rem;
+            overflow-wrap: anywhere;
+            word-break: break-word;
         }
 
-        .download-btn {
-            padding: 0.4rem 0.8rem;
-            font-size: 0.85rem;
-            border-radius: 6px;
+        .file-actions {
+            display: flex;
+            gap: 0.45rem;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+
+        .file-actions button {
+            padding-inline: 0.75rem;
             box-shadow: none;
         }
 
-        .spinner {
-            display: none;
-            border: 3px solid rgba(79, 70, 229, 0.2);
-            border-top: 3px solid var(--primary);
-            border-radius: 50%;
-            width: 24px;
-            height: 24px;
-            animation: spin 1s linear infinite;
+        .state-item {
+            display: grid;
+            gap: 0.8rem;
+            justify-items: center;
+            padding: 2.2rem 1rem;
+            color: var(--text-muted);
+            text-align: center;
+            border: 1px dashed var(--border);
+            border-radius: 8px;
+            background: var(--surface-muted);
         }
 
-        @keyframes spin {
-            0% {
-                transform: rotate(0deg);
-            }
+        .state-icon {
+            font-size: 2.6rem;
+            line-height: 1;
+        }
 
-            100% {
-                transform: rotate(360deg);
-            }
+        .state-title {
+            color: var(--text-main);
+            font-weight: 800;
+        }
+
+        .state-message {
+            max-width: 34rem;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        .spinner {
+            width: 42px;
+            height: 42px;
+            border: 4px solid color-mix(in srgb, var(--primary) 18%, transparent);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 0.9s linear infinite;
         }
 
         .loading-overlay {
             position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(255, 255, 255, 0.85);
-            backdrop-filter: blur(4px);
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            border-radius: 20px;
-            z-index: 10;
-            display: none;
-        }
-
-        .loading-overlay .spinner {
-            display: block;
-            width: 50px;
-            height: 50px;
-            border-width: 4px;
-            margin-bottom: 1.5rem;
+            inset: 0;
+            z-index: 20;
+            display: grid;
+            gap: 1rem;
+            place-items: center;
+            align-content: center;
+            padding: 2rem;
+            border-radius: 8px;
+            background: color-mix(in srgb, var(--surface) 86%, transparent);
+            backdrop-filter: blur(6px);
+            text-align: center;
         }
 
         .loading-text {
-            font-weight: 600;
-            font-size: 1.1rem;
             color: var(--primary);
+            font-weight: 800;
+            overflow-wrap: anywhere;
+            word-break: break-word;
         }
 
-        #error-content {
-            text-align: center;
-            padding: 3rem 2rem;
+        .toast-root {
+            position: fixed;
+            right: 18px;
+            bottom: 18px;
+            z-index: 100;
+            display: grid;
+            gap: 0.55rem;
+            width: min(360px, calc(100vw - 36px));
         }
 
-        .error-icon {
-            font-size: 4rem;
-            margin-bottom: 1rem;
-            animation: shake 0.5s;
+        .toast {
+            padding: 0.85rem 1rem;
+            border: 1px solid var(--border);
+            border-left: 4px solid var(--primary);
+            border-radius: 8px;
+            color: var(--text-main);
+            background: var(--surface);
+            box-shadow: 0 12px 30px rgba(15, 23, 42, 0.16);
+            font-weight: 700;
+            overflow-wrap: anywhere;
+            word-break: break-word;
         }
 
-        @keyframes shake {
+        .toast.success {
+            border-left-color: var(--accent);
+        }
 
-            0%,
-            100% {
-                transform: translateX(0);
+        .toast.error {
+            border-left-color: var(--danger);
+        }
+
+        .toast.warning {
+            border-left-color: var(--warning);
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        @media (max-width: 640px) {
+            body {
+                align-items: stretch;
+                padding: 0;
+                background: var(--background);
             }
 
-            25% {
-                transform: translateX(-5px);
+            .container {
+                width: 100%;
+                max-width: none;
+                min-height: 100vh;
+                min-height: 100dvh;
+                max-height: none;
+                border-radius: 0;
+                border-inline: 0;
+                padding: 1rem;
+                box-shadow: none;
             }
 
-            50% {
-                transform: translateX(5px);
+            .auth-view,
+            .state-view {
+                align-content: center;
+                min-height: calc(100dvh - 2rem);
             }
 
-            75% {
-                transform: translateX(-5px);
+            .password-row,
+            .header,
+            .header-actions,
+            .search-row,
+            .action-bar {
+                display: flex;
+                flex-direction: column;
+                align-items: stretch;
             }
-        }
 
-        /* Scrollbar styles */
-        ::-webkit-scrollbar {
-            width: 8px;
-        }
+            .header-actions button,
+            .action-bar button,
+            .password-row button {
+                width: 100%;
+            }
 
-        ::-webkit-scrollbar-track {
-            background: transparent;
-        }
+            #file-list {
+                max-height: none;
+                overflow: visible;
+                padding-right: 0;
+            }
 
-        ::-webkit-scrollbar-thumb {
-            background: #cbd5e1;
-            border-radius: 4px;
-        }
+            .file-item {
+                grid-template-columns: auto minmax(0, 1fr);
+                align-items: flex-start;
+                padding: 0.9rem;
+            }
 
-        ::-webkit-scrollbar-thumb:hover {
-            background: #94a3b8;
+            .file-actions {
+                grid-column: 1 / -1;
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .file-actions button {
+                width: 100%;
+            }
         }
     </style>
 </head>
 
 <body>
-    <div class="container" id="loading-container"
-        style="display: none; justify-content: center; align-items: center; height: 300px;">
-        <div style="text-align: center;">
-            <div class="spinner" style="display: inline-block; width: 40px; height: 40px; margin-bottom: 1rem;"></div>
-            <div style="font-weight: 500; color: var(--text-muted); font-size: 1.1rem;">보안 검사 및 파일 로딩 중...</div>
-        </div>
-    </div>
+    <div class="toast-root" id="toast-root" aria-live="polite" aria-atomic="true"></div>
 
-    <div class="container" id="app-content" style="display: none;">
-        <div class="loading-overlay" id="global-loader">
-            <div class="spinner"></div>
-            <div class="loading-text" id="loading-message">압축 중입니다...</div>
-        </div>
+    <main class="container">
+        <section class="auth-view" id="auth-view" hidden>
+            <div class="brand">
+                <span class="brand-mark" aria-hidden="true">PD</span>
+                <h1>Print Drive</h1>
+            </div>
+            <p class="auth-copy">공개 저장소에는 암호화된 파일만 있으며, 비밀번호는 이 브라우저 안에서만 복호화에 사용됩니다.</p>
+            <form class="password-form" id="password-form">
+                <label for="password-input">암호화 비밀번호</label>
+                <div class="password-row">
+                    <input id="password-input" type="password" autocomplete="current-password" placeholder="비밀번호 입력">
+                    <button type="submit" id="auth-submit">열기</button>
+                </div>
+                <label class="remember-row">
+                    <input id="remember-session" type="checkbox" checked>
+                    이 탭에서 새로고침해도 유지
+                </label>
+                <p class="form-message" id="auth-error" hidden></p>
+            </form>
+        </section>
 
-        <div class="header">
-            <h1>✨ Print Drive</h1>
-            <span id="file-count" style="color: var(--text-muted); font-weight: 500;">0 개 파일</span>
-        </div>
+        <section class="state-view" id="loading-view" hidden>
+            <div class="spinner" aria-hidden="true"></div>
+            <p class="loading-text">암호화된 목록을 확인하는 중입니다...</p>
+        </section>
 
-        <div class="action-bar">
-            <button class="secondary" onclick="toggleSelectAll()" id="btn-select-all">
-                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                </svg>
-                전체 선택
-            </button>
-            <button onclick="downloadSelectedAsZip()" id="btn-download-selected" disabled>
-                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
-                </svg>
-                선택 항목을 압축(ZIP)하여 다운로드
-            </button>
-        </div>
+        <section id="app-view" hidden>
+            <div class="loading-overlay" id="global-loader" hidden>
+                <div class="spinner" aria-hidden="true"></div>
+                <p class="loading-text" id="loading-message">처리 중입니다...</p>
+            </div>
 
-        <ul id="file-list">
-        </ul>
-    </div>
+            <header class="header">
+                <div class="brand">
+                    <span class="brand-mark" aria-hidden="true">PD</span>
+                    <div class="title-block">
+                        <h1>Print Drive</h1>
+                        <p class="subtle">프린트할 파일을 임시로 내려받는 암호화 공간입니다.</p>
+                    </div>
+                </div>
+                <div class="header-actions">
+                    <button class="secondary" type="button" id="btn-install" hidden>앱으로 설치</button>
+                    <button class="secondary" type="button" id="btn-refresh">새로고침</button>
+                    <button class="secondary" type="button" id="btn-lock">잠금</button>
+                </div>
+            </header>
 
-    <div class="container" id="error-content" style="display: none;">
-        <div class="error-icon">🚷</div>
-        <h2 style="margin-top:0; color:#dc2626;">접근 거부</h2>
-        <p style="color:var(--text-muted); font-size: 1.1rem;">비밀번호가 올바르지 않습니다.</p>
-        <button onclick="location.reload()"
-            style="margin: 2rem auto 0; display: flex; width: 120px; justify-content: center;">다시 시도</button>
-    </div>
+            <section class="controls" aria-label="파일 검색 및 정렬">
+                <div class="search-row">
+                    <input id="search-input" type="search" placeholder="파일명 검색" autocomplete="off">
+                    <select id="type-filter" aria-label="파일 타입 필터">
+                        <option value="all">전체</option>
+                        <option value="pdf">PDF</option>
+                        <option value="image">이미지</option>
+                        <option value="document">문서</option>
+                        <option value="other">기타</option>
+                    </select>
+                    <select id="sort-select" aria-label="파일 정렬">
+                        <option value="name">이름순</option>
+                        <option value="size">크기순</option>
+                        <option value="extension">확장자순</option>
+                        <option value="api">기본순</option>
+                    </select>
+                </div>
+                <div class="meta-row">
+                    <span id="result-count">0개 표시</span>
+                    <span class="selection-count" id="selected-count">선택 0개</span>
+                </div>
+                <p class="filename-hint">
+                    권장 파일명: 2026-06-05_회로과제.pdf ·
+                    <span class="security-note">파일명과 목록은 비밀번호 입력 전까지 숨겨집니다.</span>
+                </p>
+            </section>
+
+            <section class="action-bar" aria-label="선택 작업">
+                <button class="secondary" type="button" id="btn-select-all">표시 항목 선택</button>
+                <button class="secondary" type="button" id="btn-clear-selection" disabled>선택 해제</button>
+                <button type="button" id="btn-download-selected" disabled>ZIP 다운로드</button>
+            </section>
+
+            <ul id="file-list" aria-live="polite"></ul>
+        </section>
+
+        <noscript>
+            <p>이 페이지는 암호화된 파일을 복호화하기 위해 JavaScript가 필요합니다.</p>
+        </noscript>
+    </main>
 
     <script>
-        const REPO_OWNER = 'BJDG-CM';
-        const REPO_NAME = 'print-drive';
-        let allFiles = [];
-        let isAllSelected = false;
+        const MANIFEST_URL = 'files/manifest.enc';
+        const SESSION_KEY = 'print-drive-session-key-v1';
+        const ZIP_FILE_NAME = 'Print_Drive_Download_Files.zip';
+        const ZIP_FOLDER_NAME = 'Print_Drive_Download_Files';
+        const MANIFEST_AAD = 'print-drive:manifest:v1';
 
-        // Auth
-        window.onload = () => {
-            document.body.style.display = 'none';
-            const password = prompt("비밀번호를 입력하세요:");
-            document.body.style.display = 'flex';
-
-            if (password === "0318") {
-                document.getElementById('loading-container').style.display = 'flex';
-                fetchFiles();
-            } else {
-                document.getElementById('error-content').style.display = 'block';
-            }
+        const FILE_TYPES = {
+            pdf: new Set(['pdf']),
+            image: new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'heic']),
+            document: new Set(['doc', 'docx', 'hwp', 'hwpx', 'ppt', 'pptx', 'xls', 'xlsx', 'txt', 'csv', 'md']),
+            archive: new Set(['zip', '7z', 'rar', 'tar', 'gz'])
         };
 
-        async function fetchFiles() {
-            const apiUrl = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/files/`;
-            const fileList = document.getElementById('file-list');
+        const FILE_TYPE_LABELS = {
+            pdf: 'PDF',
+            image: '이미지',
+            document: '문서',
+            archive: '압축파일',
+            other: '기타'
+        };
+
+        const FILE_TYPE_ICONS = {
+            pdf: '📕',
+            image: '🖼️',
+            document: '📝',
+            archive: '🗜️',
+            other: '📄'
+        };
+
+        const ICONS = {
+            check: '<svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>',
+            x: '<svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>',
+            refresh: '<svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>',
+            download: '<svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>',
+            copy: '<svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>',
+            open: '<svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 3h7m0 0v7m0-7L10 14m-1 7H5a2 2 0 01-2-2V7a2 2 0 012-2h4"></path></svg>',
+            lock: '<svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4"></path></svg>',
+            plus: '<svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>'
+        };
+
+        let manifestEnvelope = null;
+        let decryptKey = null;
+        let allFiles = [];
+        let visibleFiles = [];
+        let selectedIds = new Set();
+        let isLoading = false;
+        let deferredInstallPrompt = null;
+
+        const collator = new Intl.Collator('ko-KR', { numeric: true, sensitivity: 'base' });
+        const textEncoder = new TextEncoder();
+        const textDecoder = new TextDecoder();
+
+        const dom = {
+            authView: document.getElementById('auth-view'),
+            loadingView: document.getElementById('loading-view'),
+            appView: document.getElementById('app-view'),
+            passwordForm: document.getElementById('password-form'),
+            passwordInput: document.getElementById('password-input'),
+            rememberSession: document.getElementById('remember-session'),
+            authSubmit: document.getElementById('auth-submit'),
+            authError: document.getElementById('auth-error'),
+            refreshButton: document.getElementById('btn-refresh'),
+            installButton: document.getElementById('btn-install'),
+            lockButton: document.getElementById('btn-lock'),
+            searchInput: document.getElementById('search-input'),
+            typeFilter: document.getElementById('type-filter'),
+            sortSelect: document.getElementById('sort-select'),
+            resultCount: document.getElementById('result-count'),
+            selectedCount: document.getElementById('selected-count'),
+            selectAllButton: document.getElementById('btn-select-all'),
+            clearSelectionButton: document.getElementById('btn-clear-selection'),
+            zipButton: document.getElementById('btn-download-selected'),
+            fileList: document.getElementById('file-list'),
+            loader: document.getElementById('global-loader'),
+            loadingMessage: document.getElementById('loading-message'),
+            toastRoot: document.getElementById('toast-root')
+        };
+
+        document.addEventListener('DOMContentLoaded', init);
+
+        function init() {
+            bindEvents();
+            setButtonContent(dom.refreshButton, 'refresh', '새로고침');
+            setButtonContent(dom.installButton, 'plus', '앱으로 설치');
+            setButtonContent(dom.lockButton, 'lock', '잠금');
+            setButtonContent(dom.selectAllButton, 'check', '표시 항목 선택');
+            setButtonContent(dom.clearSelectionButton, 'x', '선택 해제');
+            setButtonContent(dom.zipButton, 'download', 'ZIP 다운로드');
+            registerServiceWorker();
+
+            if (!window.crypto?.subtle) {
+                showView(dom.authView);
+                showAuthError('이 브라우저는 Web Crypto API를 지원하지 않습니다.');
+                dom.authSubmit.disabled = true;
+                return;
+            }
+
+            const storedKey = sessionStorage.getItem(SESSION_KEY);
+            if (storedKey) {
+                unlockWithStoredKey(storedKey);
+                return;
+            }
+
+            showView(dom.authView);
+            dom.passwordInput.focus();
+        }
+
+        function bindEvents() {
+            dom.passwordForm.addEventListener('submit', handlePasswordSubmit);
+            dom.refreshButton.addEventListener('click', () => reloadEncryptedManifest({ manual: true }));
+            dom.lockButton.addEventListener('click', lockDrive);
+            dom.searchInput.addEventListener('input', applyFilters);
+            dom.typeFilter.addEventListener('change', applyFilters);
+            dom.sortSelect.addEventListener('change', applyFilters);
+            dom.selectAllButton.addEventListener('click', toggleSelectAll);
+            dom.clearSelectionButton.addEventListener('click', clearSelection);
+            dom.zipButton.addEventListener('click', downloadSelectedAsZip);
+            dom.installButton.addEventListener('click', promptInstall);
+
+            window.addEventListener('beforeinstallprompt', (event) => {
+                event.preventDefault();
+                deferredInstallPrompt = event;
+                dom.installButton.hidden = false;
+            });
+        }
+
+        async function unlockWithStoredKey(rawKeyBase64) {
+            showView(dom.loadingView);
+            try {
+                const key = await importAesKey(base64ToBytes(rawKeyBase64));
+                await unlockWithKey(key);
+            } catch (error) {
+                console.warn('Stored session key could not unlock the manifest.', error);
+                sessionStorage.removeItem(SESSION_KEY);
+                decryptKey = null;
+                showView(dom.authView);
+                dom.passwordInput.focus();
+            }
+        }
+
+        async function handlePasswordSubmit(event) {
+            event.preventDefault();
+            const password = dom.passwordInput.value;
+            if (!password) {
+                showAuthError('비밀번호를 입력해 주세요.');
+                return;
+            }
+
+            dom.authSubmit.disabled = true;
+            hideAuthError();
 
             try {
-                const response = await fetch(apiUrl);
-                if (!response.ok) throw new Error('API 로드 실패');
+                showOverlay('비밀번호로 복호화 키를 만드는 중입니다...');
+                const envelope = await loadManifestEnvelope();
+                const keyBytes = await deriveKeyBytes(password, envelope.crypto.kdf);
+                const key = await importAesKey(keyBytes);
+                await unlockWithKey(key);
 
-                const data = await response.json();
-
-                allFiles = data.filter(file => !file.name.startsWith('.') && !file.name.endsWith('.html'));
-
-                document.getElementById('loading-container').style.display = 'none';
-                document.getElementById('app-content').style.display = 'block';
-
-                document.getElementById('file-count').textContent = `${allFiles.length} 개의 파일`;
-                fileList.innerHTML = '';
-
-                if (allFiles.length === 0) {
-                    fileList.innerHTML = `
-                        <li style="text-align:center; padding: 3rem 1rem; color: #9ca3af; display:flex; flex-direction:column; align-items:center;">
-                            <svg width="48" height="48" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="margin-bottom:1rem; opacity:0.5;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"></path></svg>
-                            현재 업로드 된 파일이 없습니다.
-                        </li>`;
-                    return;
+                if (dom.rememberSession.checked) {
+                    sessionStorage.setItem(SESSION_KEY, bytesToBase64(new Uint8Array(keyBytes)));
+                } else {
+                    sessionStorage.removeItem(SESSION_KEY);
                 }
 
-                allFiles.forEach((file, index) => {
-                    const li = document.createElement('li');
-                    li.className = 'file-item';
-                    li.onclick = (e) => {
-                        if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'BUTTON' && !e.target.closest('.download-btn') && e.target.tagName !== 'A') {
-                            const cb = document.getElementById(`cb-${index}`);
-                            cb.checked = !cb.checked;
-                            updateSelection();
-                        }
-                    };
-
-                    const sizeInKB = (file.size / 1024).toFixed(1);
-
-                    li.innerHTML = `
-                        <input type="checkbox" class="file-checkbox" id="cb-${index}" value="${file.download_url}" data-name="${file.name}" onchange="updateSelection()">
-                        <div class="file-info">
-                            <a href="https://${REPO_OWNER}.github.io/${REPO_NAME}/files/${file.name}" class="file-name" target="_blank">
-                                📄 ${file.name}
-                            </a>
-                            <span class="file-meta">파일 크기: ${sizeInKB} KB</span>
-                        </div>
-                        <button class="download-btn secondary" onclick="downloadSingleFile('${file.download_url}', '${file.name}'); event.stopPropagation();">
-                            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-                            받기
-                        </button>
-                    `;
-                    fileList.appendChild(li);
-                });
+                dom.passwordInput.value = '';
             } catch (error) {
                 console.error(error);
-                document.getElementById('loading-container').style.display = 'none';
-                document.getElementById('app-content').style.display = 'block';
-                fileList.innerHTML = `
-                    <li style="text-align:center; padding: 2rem; color: #dc2626;">
-                        ⚠️ 파일을 불러오는 데 실패했습니다.<br>잠시 후 새로고침 해주세요.
-                    </li>`;
+                sessionStorage.removeItem(SESSION_KEY);
+                showView(dom.authView);
+                showAuthError('비밀번호가 맞지 않거나 암호화 목록을 열 수 없습니다.');
+            } finally {
+                dom.authSubmit.disabled = false;
+                hideOverlay();
             }
         }
 
-        function updateSelection() {
-            const checkboxes = document.querySelectorAll('.file-checkbox');
-            const checkedBoxes = Array.from(checkboxes).filter(cb => cb.checked);
-            const checkedCount = checkedBoxes.length;
-            const btn = document.getElementById('btn-download-selected');
-
-            btn.disabled = checkedCount === 0;
-            if (checkedCount > 0) {
-                btn.innerHTML = `<svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg> 선택한 ${checkedCount}개 압축 다운로드`;
-            } else {
-                btn.innerHTML = `<svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg> 선택 항목을 압축(ZIP)하여 다운로드`;
-            }
-
-            checkboxes.forEach(cb => {
-                const item = cb.closest('.file-item');
-                if (cb.checked) item.classList.add('selected');
-                else item.classList.remove('selected');
-            });
-
-            isAllSelected = checkedCount === checkboxes.length && checkboxes.length > 0;
-            document.getElementById('btn-select-all').innerHTML = isAllSelected
-                ? `<svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg> 선택 해제`
-                : `<svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> 전체 선택`;
+        async function unlockWithKey(key) {
+            decryptKey = key;
+            await reloadEncryptedManifest({ throwOnError: true });
+            showView(dom.appView);
+            handleRequestedFile();
         }
 
-        function toggleSelectAll() {
-            const checkboxes = document.querySelectorAll('.file-checkbox');
-            checkboxes.forEach(cb => {
-                cb.checked = !isAllSelected;
+        async function reloadEncryptedManifest(options = {}) {
+            setLoading(true, options.manual ? '암호화된 목록을 새로고침하는 중입니다...' : '암호화된 목록을 여는 중입니다...');
+
+            try {
+                const envelope = await loadManifestEnvelope(true);
+                const manifest = await decryptManifest(envelope, decryptKey);
+                allFiles = manifest.files.map(normalizeFile);
+                selectedIds = new Set([...selectedIds].filter((id) => allFiles.some((file) => file.id === id)));
+                applyFilters();
+
+                if (options.manual) {
+                    showToast('암호화된 파일 목록을 새로고침했습니다.', 'success');
+                }
+            } catch (error) {
+                if (options.throwOnError) {
+                    throw error;
+                }
+
+                console.error(error);
+                renderErrorState(error);
+                showToast('파일 목록을 열지 못했습니다.', 'error');
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        async function loadManifestEnvelope(force = false) {
+            if (manifestEnvelope && !force) {
+                return manifestEnvelope;
+            }
+
+            const response = await fetch(`${MANIFEST_URL}?t=${Date.now()}`, {
+                cache: 'no-store',
+                headers: {
+                    Accept: 'application/json'
+                }
             });
+
+            if (!response.ok) {
+                const error = new Error(`암호화 목록을 찾을 수 없습니다. (${response.status})`);
+                error.status = response.status;
+                throw error;
+            }
+
+            manifestEnvelope = await response.json();
+            validateManifestEnvelope(manifestEnvelope);
+            return manifestEnvelope;
+        }
+
+        function validateManifestEnvelope(envelope) {
+            if (
+                envelope?.version !== 1 ||
+                envelope?.crypto?.kdf?.name !== 'PBKDF2' ||
+                envelope?.crypto?.kdf?.hash !== 'SHA-256' ||
+                !Number.isInteger(envelope.crypto.kdf.iterations) ||
+                !envelope.crypto.kdf.salt ||
+                !envelope?.manifest?.iv ||
+                !envelope?.manifest?.data
+            ) {
+                throw new Error('암호화 목록 형식이 올바르지 않습니다.');
+            }
+        }
+
+        async function deriveKeyBytes(password, kdf) {
+            const baseKey = await crypto.subtle.importKey(
+                'raw',
+                textEncoder.encode(password),
+                'PBKDF2',
+                false,
+                ['deriveBits']
+            );
+
+            return crypto.subtle.deriveBits(
+                {
+                    name: 'PBKDF2',
+                    hash: 'SHA-256',
+                    salt: base64ToBytes(kdf.salt),
+                    iterations: kdf.iterations
+                },
+                baseKey,
+                256
+            );
+        }
+
+        async function importAesKey(keyBytes) {
+            return crypto.subtle.importKey(
+                'raw',
+                keyBytes,
+                'AES-GCM',
+                false,
+                ['decrypt']
+            );
+        }
+
+        async function decryptManifest(envelope, key) {
+            const plaintext = await crypto.subtle.decrypt(
+                {
+                    name: 'AES-GCM',
+                    iv: base64ToBytes(envelope.manifest.iv),
+                    additionalData: textEncoder.encode(MANIFEST_AAD)
+                },
+                key,
+                base64ToBytes(envelope.manifest.data)
+            );
+
+            const manifest = JSON.parse(textDecoder.decode(plaintext));
+            if (!Array.isArray(manifest.files)) {
+                throw new Error('암호화 목록 안에 파일 목록이 없습니다.');
+            }
+
+            return manifest;
+        }
+
+        function normalizeFile(file, index) {
+            const extension = file.extension || getExtension(file.name);
+            const type = file.type || getFileType(extension);
+
+            return {
+                id: file.id,
+                name: file.name,
+                size: Number(file.size || 0),
+                encryptedSize: Number(file.encryptedSize || 0),
+                extension,
+                type,
+                mime: file.mime || 'application/octet-stream',
+                path: file.path,
+                iv: file.iv,
+                sha256: file.sha256,
+                apiIndex: index
+            };
+        }
+
+        function applyFilters() {
+            const query = dom.searchInput.value.trim().toLocaleLowerCase('ko-KR');
+            const filterType = dom.typeFilter.value;
+            const sortBy = dom.sortSelect.value;
+
+            visibleFiles = allFiles.filter((file) => {
+                const matchesQuery = !query || file.name.toLocaleLowerCase('ko-KR').includes(query);
+                const matchesType = filterType === 'all' || file.type === filterType || (filterType === 'other' && file.type === 'archive');
+                return matchesQuery && matchesType;
+            });
+
+            visibleFiles.sort((a, b) => {
+                if (sortBy === 'size') {
+                    return b.size - a.size || collator.compare(a.name, b.name);
+                }
+
+                if (sortBy === 'extension') {
+                    return collator.compare(a.extension, b.extension) || collator.compare(a.name, b.name);
+                }
+
+                if (sortBy === 'api') {
+                    return a.apiIndex - b.apiIndex;
+                }
+
+                return collator.compare(a.name, b.name);
+            });
+
+            renderFiles();
             updateSelection();
         }
 
-        function downloadSingleFile(url, filename) {
-            const a = document.createElement('a');
-            a.href = `files/${filename}`;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
+        function renderFiles() {
+            dom.fileList.replaceChildren();
+
+            if (allFiles.length === 0) {
+                dom.fileList.appendChild(createStateItem('📂', '현재 업로드된 파일이 없습니다.', 'private_files/에 파일을 넣고 암호화 스크립트를 실행해 주세요.'));
+                updateResultCount();
+                return;
+            }
+
+            if (visibleFiles.length === 0) {
+                dom.fileList.appendChild(createStateItem('🔎', '검색 결과가 없습니다.', '검색어나 파일 타입 필터를 조정해 주세요.'));
+                updateResultCount();
+                return;
+            }
+
+            visibleFiles.forEach((file) => {
+                dom.fileList.appendChild(createFileItem(file));
+            });
+
+            updateResultCount();
+        }
+
+        function createFileItem(file) {
+            const item = document.createElement('li');
+            item.className = 'file-item';
+            item.dataset.fileId = file.id;
+
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.className = 'file-checkbox';
+            checkbox.checked = selectedIds.has(file.id);
+            checkbox.setAttribute('aria-label', `${file.name} 선택`);
+            checkbox.addEventListener('click', (event) => event.stopPropagation());
+            checkbox.addEventListener('change', () => {
+                setFileSelection(file.id, checkbox.checked);
+            });
+
+            const info = document.createElement('div');
+            info.className = 'file-info';
+
+            const nameLine = document.createElement('div');
+            nameLine.className = 'file-name-line';
+
+            const icon = document.createElement('span');
+            icon.className = 'file-type-icon';
+            icon.textContent = FILE_TYPE_ICONS[file.type] || FILE_TYPE_ICONS.other;
+            icon.setAttribute('aria-hidden', 'true');
+
+            const link = document.createElement('a');
+            link.className = 'file-name-link';
+            link.href = createFileAppLink(file);
+            link.textContent = file.name;
+            link.addEventListener('click', async (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                await openFile(file.id);
+            });
+
+            nameLine.append(icon, link);
+
+            const meta = document.createElement('span');
+            meta.className = 'file-meta';
+            meta.textContent = `${FILE_TYPE_LABELS[file.type] || FILE_TYPE_LABELS.other} · ${formatSize(file.size)}`;
+
+            info.append(nameLine, meta);
+
+            const actions = document.createElement('div');
+            actions.className = 'file-actions';
+
+            const copyButton = document.createElement('button');
+            copyButton.type = 'button';
+            copyButton.className = 'secondary';
+            setButtonContent(copyButton, 'copy', '링크 복사');
+            copyButton.addEventListener('click', async (event) => {
+                event.stopPropagation();
+                await copyFileLink(file);
+            });
+
+            const openButton = document.createElement('button');
+            openButton.type = 'button';
+            openButton.className = 'secondary';
+            setButtonContent(openButton, 'open', '열기');
+            openButton.addEventListener('click', async (event) => {
+                event.stopPropagation();
+                await openFile(file.id);
+            });
+
+            const downloadButton = document.createElement('button');
+            downloadButton.type = 'button';
+            setButtonContent(downloadButton, 'download', '받기');
+            downloadButton.addEventListener('click', async (event) => {
+                event.stopPropagation();
+                await downloadSingleFile(file.id);
+            });
+
+            actions.append(copyButton, openButton, downloadButton);
+
+            item.addEventListener('click', () => {
+                setFileSelection(file.id, !selectedIds.has(file.id));
+            });
+
+            item.append(checkbox, info, actions);
+            return item;
+        }
+
+        function createStateItem(iconText, title, message) {
+            const item = document.createElement('li');
+            item.className = 'state-item';
+
+            const icon = document.createElement('span');
+            icon.className = 'state-icon';
+            icon.textContent = iconText;
+            icon.setAttribute('aria-hidden', 'true');
+
+            const titleElement = document.createElement('div');
+            titleElement.className = 'state-title';
+            titleElement.textContent = title;
+
+            const messageElement = document.createElement('p');
+            messageElement.className = 'state-message';
+            messageElement.textContent = message;
+
+            item.append(icon, titleElement, messageElement);
+            return item;
+        }
+
+        function renderErrorState(error) {
+            dom.fileList.replaceChildren();
+            const item = createStateItem('⚠️', '파일 목록을 열지 못했습니다.', getFetchErrorMessage(error));
+            const retryButton = document.createElement('button');
+            retryButton.type = 'button';
+            setButtonContent(retryButton, 'refresh', '다시 시도');
+            retryButton.addEventListener('click', () => reloadEncryptedManifest({ manual: true }));
+            item.appendChild(retryButton);
+            dom.fileList.appendChild(item);
+
+            visibleFiles = [];
+            updateResultCount();
+            updateSelection();
+        }
+
+        function getFetchErrorMessage(error) {
+            if (error?.status === 404) {
+                return 'files/manifest.enc가 없습니다. private_files/에 원본을 넣고 암호화 스크립트를 먼저 실행해 주세요.';
+            }
+
+            if (error instanceof TypeError) {
+                return '네트워크 오류가 발생했습니다. 연결 상태를 확인한 뒤 다시 시도해 주세요.';
+            }
+
+            if (error?.status) {
+                return `${error.message}. 방금 파일을 넣었다면 10~30초 후 다시 시도해 주세요.`;
+            }
+
+            return '비밀번호가 바뀌었거나 암호화 파일이 갱신 중일 수 있습니다. 잠시 후 다시 시도해 주세요.';
+        }
+
+        function setFileSelection(fileId, shouldSelect) {
+            if (shouldSelect) {
+                selectedIds.add(fileId);
+            } else {
+                selectedIds.delete(fileId);
+            }
+
+            updateSelection();
+        }
+
+        function updateSelection() {
+            const selectedCount = selectedIds.size;
+            const allVisibleSelected = visibleFiles.length > 0 && visibleFiles.every((file) => selectedIds.has(file.id));
+
+            dom.fileList.querySelectorAll('.file-item').forEach((item) => {
+                const fileId = item.dataset.fileId;
+                const isSelected = selectedIds.has(fileId);
+                item.classList.toggle('selected', isSelected);
+                const checkbox = item.querySelector('.file-checkbox');
+                if (checkbox) {
+                    checkbox.checked = isSelected;
+                }
+            });
+
+            dom.selectedCount.textContent = `선택 ${selectedCount}개`;
+            dom.selectAllButton.disabled = isLoading || visibleFiles.length === 0;
+            dom.clearSelectionButton.disabled = isLoading || selectedCount === 0;
+            dom.zipButton.disabled = isLoading || selectedCount === 0;
+            setButtonContent(dom.zipButton, 'download', selectedCount > 0 ? `${selectedCount}개 ZIP 다운로드` : 'ZIP 다운로드');
+            setButtonContent(dom.selectAllButton, allVisibleSelected ? 'x' : 'check', allVisibleSelected ? '표시 항목 해제' : '표시 항목 선택');
+        }
+
+        function toggleSelectAll() {
+            if (visibleFiles.length === 0) {
+                return;
+            }
+
+            const allVisibleSelected = visibleFiles.every((file) => selectedIds.has(file.id));
+            visibleFiles.forEach((file) => {
+                if (allVisibleSelected) {
+                    selectedIds.delete(file.id);
+                } else {
+                    selectedIds.add(file.id);
+                }
+            });
+
+            updateSelection();
+        }
+
+        function clearSelection() {
+            selectedIds.clear();
+            updateSelection();
+        }
+
+        async function downloadSingleFile(fileId) {
+            const file = findFile(fileId);
+            if (!file) {
+                showToast('파일 정보를 찾지 못했습니다.', 'error');
+                return;
+            }
+
+            showOverlay(`${file.name} 복호화 중입니다...`);
+            try {
+                const decrypted = await fetchAndDecryptFile(file);
+                downloadBlob(new Blob([decrypted.bytes], { type: file.mime }), file.name);
+                showToast('다운로드를 시작했습니다.', 'success');
+            } catch (error) {
+                console.error(error);
+                showToast('파일 복호화에 실패했습니다.', 'error');
+            } finally {
+                hideOverlay();
+            }
+        }
+
+        async function openFile(fileId) {
+            const file = findFile(fileId);
+            if (!file) {
+                showToast('파일 정보를 찾지 못했습니다.', 'error');
+                return;
+            }
+
+            const previewWindow = window.open('', '_blank', 'noopener');
+            showOverlay(`${file.name} 복호화 중입니다...`);
+
+            try {
+                const decrypted = await fetchAndDecryptFile(file);
+                const blob = new Blob([decrypted.bytes], { type: file.mime });
+                const url = URL.createObjectURL(blob);
+
+                if (previewWindow) {
+                    previewWindow.location.href = url;
+                    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+                } else {
+                    downloadBlob(blob, file.name);
+                    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+                }
+
+                showToast('복호화된 파일을 열었습니다.', 'success');
+            } catch (error) {
+                console.error(error);
+                if (previewWindow) {
+                    previewWindow.close();
+                }
+                showToast('파일을 열지 못했습니다.', 'error');
+            } finally {
+                hideOverlay();
+            }
         }
 
         async function downloadSelectedAsZip() {
-            const checkboxes = document.querySelectorAll('.file-checkbox:checked');
-            if (checkboxes.length === 0) return;
+            const selectedFiles = allFiles.filter((file) => selectedIds.has(file.id));
+            if (selectedFiles.length === 0) {
+                return;
+            }
 
-            const loader = document.getElementById('global-loader');
-            const msg = document.getElementById('loading-message');
-            loader.style.display = 'flex';
-            msg.textContent = '🚀 파일을 하나로 묶어 압축 포장하는 중입니다...';
+            showOverlay(`선택한 ${selectedFiles.length}개 파일을 복호화하는 중입니다...`);
 
             try {
-                const zip = new JSZip();
-                const folderName = "Print_Drive_Download_Files";
-                const folder = zip.folder(folderName);
-
-                for (let i = 0; i < checkboxes.length; i++) {
-                    const cb = checkboxes[i];
-                    const url = cb.value;
-                    const name = cb.getAttribute('data-name');
-
-                    msg.textContent = `🚀 [ ${i + 1} / ${checkboxes.length} ] 파일을 내려받는 중...`;
-
-                    const response = await fetch(url);
-                    const blob = await response.blob();
-                    folder.file(name, blob);
+                const zipEntries = [];
+                for (let index = 0; index < selectedFiles.length; index += 1) {
+                    const file = selectedFiles[index];
+                    dom.loadingMessage.textContent = `[${index + 1} / ${selectedFiles.length}] ${file.name} 복호화 중입니다...`;
+                    const decrypted = await fetchAndDecryptFile(file);
+                    zipEntries.push({
+                        name: `${ZIP_FOLDER_NAME}/${file.name}`,
+                        bytes: decrypted.bytes
+                    });
                 }
 
-                msg.textContent = '🎉 거의 다 되었습니다! ZIP 압축파일 생성 중...';
-
-                const content = await zip.generateAsync({ type: "blob" });
-                saveAs(content, folderName + ".zip");
-
-                toggleSelectAll();
-            } catch (e) {
-                console.error(e);
-                alert('ZIP 파일 압축 중 오류가 발생했습니다 ㅠㅠ 인터넷 연결을 확인해주세요.');
+                dom.loadingMessage.textContent = 'ZIP 파일을 생성하는 중입니다...';
+                const zipBlob = createZipBlob(zipEntries);
+                downloadBlob(zipBlob, ZIP_FILE_NAME);
+                clearSelection();
+                showToast('ZIP 생성이 완료되었습니다.', 'success');
+            } catch (error) {
+                console.error(error);
+                showToast('ZIP 다운로드 중 오류가 발생했습니다.', 'error');
             } finally {
-                loader.style.display = 'none';
+                hideOverlay();
             }
+        }
+
+        async function fetchAndDecryptFile(file) {
+            const response = await fetch(`${file.path}?t=${Date.now()}`, { cache: 'no-store' });
+            if (!response.ok) {
+                throw new Error(`${file.name} 암호문 다운로드 실패 (${response.status})`);
+            }
+
+            const encrypted = await response.arrayBuffer();
+            const paddedPlaintext = await crypto.subtle.decrypt(
+                {
+                    name: 'AES-GCM',
+                    iv: base64ToBytes(file.iv),
+                    additionalData: textEncoder.encode(createFileAad(file.id))
+                },
+                decryptKey,
+                encrypted
+            );
+
+            const bytes = new Uint8Array(paddedPlaintext).slice(0, file.size);
+            await verifySha256(bytes, file.sha256);
+            return { file, bytes };
+        }
+
+        async function verifySha256(bytes, expectedHash) {
+            if (!expectedHash) {
+                return;
+            }
+
+            const digest = await crypto.subtle.digest('SHA-256', bytes);
+            const actualHash = bytesToHex(new Uint8Array(digest));
+            if (actualHash !== expectedHash) {
+                throw new Error('복호화된 파일 무결성 검증 실패');
+            }
+        }
+
+        function createZipBlob(entries) {
+            const localParts = [];
+            const centralParts = [];
+            let offset = 0;
+            const now = new Date();
+            const dosTime = ((now.getHours() & 31) << 11) | ((now.getMinutes() & 63) << 5) | ((Math.floor(now.getSeconds() / 2)) & 31);
+            const dosDate = (((now.getFullYear() - 1980) & 127) << 9) | (((now.getMonth() + 1) & 15) << 5) | (now.getDate() & 31);
+
+            entries.forEach((entry) => {
+                const nameBytes = textEncoder.encode(entry.name.replace(/\\/g, '/'));
+                const data = entry.bytes instanceof Uint8Array ? entry.bytes : new Uint8Array(entry.bytes);
+                if (data.byteLength > 0xffffffff || offset > 0xffffffff) {
+                    throw new Error('ZIP64가 필요한 큰 파일은 지원하지 않습니다.');
+                }
+
+                const crc = crc32(data);
+                const localHeader = new Uint8Array(30 + nameBytes.length);
+                const localView = new DataView(localHeader.buffer);
+                writeZipHeader(localView, {
+                    signature: 0x04034b50,
+                    version: 20,
+                    flags: 0x0800,
+                    method: 0,
+                    dosTime,
+                    dosDate,
+                    crc,
+                    compressedSize: data.byteLength,
+                    uncompressedSize: data.byteLength,
+                    nameLength: nameBytes.length,
+                    extraLength: 0
+                });
+                localHeader.set(nameBytes, 30);
+                localParts.push(localHeader, data);
+
+                const centralHeader = new Uint8Array(46 + nameBytes.length);
+                const centralView = new DataView(centralHeader.buffer);
+                centralView.setUint32(0, 0x02014b50, true);
+                centralView.setUint16(4, 20, true);
+                centralView.setUint16(6, 20, true);
+                centralView.setUint16(8, 0x0800, true);
+                centralView.setUint16(10, 0, true);
+                centralView.setUint16(12, dosTime, true);
+                centralView.setUint16(14, dosDate, true);
+                centralView.setUint32(16, crc, true);
+                centralView.setUint32(20, data.byteLength, true);
+                centralView.setUint32(24, data.byteLength, true);
+                centralView.setUint16(28, nameBytes.length, true);
+                centralView.setUint16(30, 0, true);
+                centralView.setUint16(32, 0, true);
+                centralView.setUint16(34, 0, true);
+                centralView.setUint16(36, 0, true);
+                centralView.setUint32(38, 0, true);
+                centralView.setUint32(42, offset, true);
+                centralHeader.set(nameBytes, 46);
+                centralParts.push(centralHeader);
+
+                offset += localHeader.byteLength + data.byteLength;
+            });
+
+            const centralSize = centralParts.reduce((size, part) => size + part.byteLength, 0);
+            const centralOffset = offset;
+            const endHeader = new Uint8Array(22);
+            const endView = new DataView(endHeader.buffer);
+            endView.setUint32(0, 0x06054b50, true);
+            endView.setUint16(4, 0, true);
+            endView.setUint16(6, 0, true);
+            endView.setUint16(8, entries.length, true);
+            endView.setUint16(10, entries.length, true);
+            endView.setUint32(12, centralSize, true);
+            endView.setUint32(16, centralOffset, true);
+            endView.setUint16(20, 0, true);
+
+            return new Blob([...localParts, ...centralParts, endHeader], { type: 'application/zip' });
+        }
+
+        function writeZipHeader(view, header) {
+            view.setUint32(0, header.signature, true);
+            view.setUint16(4, header.version, true);
+            view.setUint16(6, header.flags, true);
+            view.setUint16(8, header.method, true);
+            view.setUint16(10, header.dosTime, true);
+            view.setUint16(12, header.dosDate, true);
+            view.setUint32(14, header.crc, true);
+            view.setUint32(18, header.compressedSize, true);
+            view.setUint32(22, header.uncompressedSize, true);
+            view.setUint16(26, header.nameLength, true);
+            view.setUint16(28, header.extraLength, true);
+        }
+
+        const CRC_TABLE = (() => {
+            const table = new Uint32Array(256);
+            for (let index = 0; index < 256; index += 1) {
+                let value = index;
+                for (let bit = 0; bit < 8; bit += 1) {
+                    value = (value & 1) ? (0xedb88320 ^ (value >>> 1)) : (value >>> 1);
+                }
+                table[index] = value >>> 0;
+            }
+            return table;
+        })();
+
+        function crc32(bytes) {
+            let crc = 0xffffffff;
+            for (let index = 0; index < bytes.length; index += 1) {
+                crc = CRC_TABLE[(crc ^ bytes[index]) & 0xff] ^ (crc >>> 8);
+            }
+            return (crc ^ 0xffffffff) >>> 0;
+        }
+
+        async function copyFileLink(file) {
+            try {
+                await copyText(createFileAppLink(file));
+                showToast('복호화 링크를 복사했습니다. 비밀번호는 포함되지 않습니다.', 'success');
+            } catch (error) {
+                console.error(error);
+                showToast('링크 복사에 실패했습니다.', 'error');
+            }
+        }
+
+        async function copyText(text) {
+            if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(text);
+                return;
+            }
+
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.setAttribute('readonly', '');
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            const copied = document.execCommand('copy');
+            textarea.remove();
+
+            if (!copied) {
+                throw new Error('Clipboard copy failed.');
+            }
+        }
+
+        function createFileAppLink(file) {
+            const url = new URL(location.href);
+            url.hash = `file=${encodeURIComponent(file.id)}`;
+            return url.toString();
+        }
+
+        function handleRequestedFile() {
+            const params = new URLSearchParams(location.hash.replace(/^#/, ''));
+            const requestedId = params.get('file');
+            if (!requestedId) {
+                return;
+            }
+
+            const file = findFile(requestedId);
+            if (!file) {
+                showToast('링크의 파일을 찾지 못했습니다.', 'warning');
+                return;
+            }
+
+            selectedIds.add(file.id);
+            updateSelection();
+            const item = dom.fileList.querySelector(`[data-file-id="${cssEscape(file.id)}"]`);
+            item?.scrollIntoView({ block: 'center' });
+            showToast('링크의 파일을 선택했습니다.', 'success');
+        }
+
+        function findFile(fileId) {
+            return allFiles.find((file) => file.id === fileId);
+        }
+
+        function lockDrive() {
+            decryptKey = null;
+            allFiles = [];
+            visibleFiles = [];
+            selectedIds.clear();
+            sessionStorage.removeItem(SESSION_KEY);
+            dom.searchInput.value = '';
+            dom.passwordInput.value = '';
+            showView(dom.authView);
+            dom.passwordInput.focus();
+            showToast('잠금 상태로 전환했습니다.', 'success');
+        }
+
+        function setLoading(loading, message) {
+            isLoading = loading;
+            dom.refreshButton.disabled = loading;
+            dom.lockButton.disabled = loading;
+            dom.searchInput.disabled = loading;
+            dom.typeFilter.disabled = loading;
+            dom.sortSelect.disabled = loading;
+            dom.selectAllButton.disabled = loading || visibleFiles.length === 0;
+            dom.clearSelectionButton.disabled = loading || selectedIds.size === 0;
+            dom.zipButton.disabled = loading || selectedIds.size === 0;
+
+            if (loading && dom.appView.hidden) {
+                showView(dom.loadingView);
+            } else if (loading) {
+                showOverlay(message);
+            } else {
+                hideOverlay();
+            }
+        }
+
+        function showOverlay(message) {
+            dom.loadingMessage.textContent = message;
+            dom.loader.hidden = false;
+        }
+
+        function hideOverlay() {
+            dom.loader.hidden = true;
+        }
+
+        function showView(view) {
+            [dom.authView, dom.loadingView, dom.appView].forEach((section) => {
+                section.hidden = section !== view;
+            });
+        }
+
+        function showAuthError(message) {
+            dom.authError.textContent = message;
+            dom.authError.hidden = false;
+            dom.passwordInput.select();
+        }
+
+        function hideAuthError() {
+            dom.authError.textContent = '';
+            dom.authError.hidden = true;
+        }
+
+        function updateResultCount() {
+            dom.resultCount.textContent = `${visibleFiles.length} / ${allFiles.length}개 표시`;
+        }
+
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            dom.toastRoot.appendChild(toast);
+
+            window.setTimeout(() => {
+                toast.remove();
+            }, 3200);
+        }
+
+        function getExtension(name) {
+            const lastDot = name.lastIndexOf('.');
+            return lastDot > -1 ? name.slice(lastDot + 1).toLowerCase() : '';
+        }
+
+        function getFileType(extension) {
+            if (FILE_TYPES.pdf.has(extension)) {
+                return 'pdf';
+            }
+
+            if (FILE_TYPES.image.has(extension)) {
+                return 'image';
+            }
+
+            if (FILE_TYPES.document.has(extension)) {
+                return 'document';
+            }
+
+            if (FILE_TYPES.archive.has(extension)) {
+                return 'archive';
+            }
+
+            return 'other';
+        }
+
+        function formatSize(bytes) {
+            if (!Number.isFinite(bytes) || bytes <= 0) {
+                return '0 B';
+            }
+
+            const units = ['B', 'KB', 'MB', 'GB'];
+            const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+            const value = bytes / Math.pow(1024, index);
+            return `${value.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+        }
+
+        function base64ToBytes(value) {
+            return Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
+        }
+
+        function bytesToBase64(bytes) {
+            let binary = '';
+            bytes.forEach((byte) => {
+                binary += String.fromCharCode(byte);
+            });
+            return btoa(binary);
+        }
+
+        function bytesToHex(bytes) {
+            return Array.from(bytes)
+                .map((byte) => byte.toString(16).padStart(2, '0'))
+                .join('');
+        }
+
+        function createFileAad(fileId) {
+            return `print-drive:file:${fileId}:v1`;
+        }
+
+        function downloadBlob(blob, filename) {
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement('a');
+            anchor.href = url;
+            anchor.download = filename;
+            document.body.appendChild(anchor);
+            anchor.click();
+            anchor.remove();
+            window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+        }
+
+        function cssEscape(value) {
+            if (window.CSS?.escape) {
+                return CSS.escape(value);
+            }
+            return String(value).replace(/["\\]/g, '\\$&');
+        }
+
+        function setButtonContent(button, iconName, label) {
+            button.replaceChildren(createIcon(iconName), document.createTextNode(label));
+        }
+
+        function createIcon(iconName) {
+            const wrapper = document.createElement('span');
+            wrapper.setAttribute('aria-hidden', 'true');
+            wrapper.innerHTML = ICONS[iconName] || '';
+            return wrapper.firstElementChild || document.createElement('span');
+        }
+
+        function registerServiceWorker() {
+            if (!('serviceWorker' in navigator)) {
+                return;
+            }
+
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js').catch((error) => {
+                    console.info('Service worker registration skipped:', error);
+                });
+            });
+        }
+
+        async function promptInstall() {
+            if (!deferredInstallPrompt) {
+                return;
+            }
+
+            deferredInstallPrompt.prompt();
+            await deferredInstallPrompt.userChoice;
+            deferredInstallPrompt = null;
+            dom.installButton.hidden = true;
         }
     </script>
 </body>

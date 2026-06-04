@@ -1,0 +1,18 @@
+{
+    "name": "Print Drive",
+    "short_name": "Print Drive",
+    "description": "프린트할 파일을 임시로 내려받는 간단한 파일 목록 페이지입니다.",
+    "start_url": "./",
+    "scope": "./",
+    "display": "standalone",
+    "background_color": "#eef2f7",
+    "theme_color": "#2563eb",
+    "icons": [
+        {
+            "src": "icon.svg",
+            "sizes": "any",
+            "type": "image/svg+xml",
+            "purpose": "any maskable"
+        }
+    ]
+}
