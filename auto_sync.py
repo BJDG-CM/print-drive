@@ -1,20 +1,27 @@
 import os
+import shutil
 import stat
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
 
-from watchdog.events import FileSystemEventHandler
-from watchdog.observers import Observer
+try:
+    from watchdog.events import FileSystemEventHandler
+    from watchdog.observers import Observer
+except ImportError:
+    print("Missing Python dependency: watchdog. Install it with `python -m pip install -r requirements.txt`.")
+    sys.exit(1)
 
 
 DEBOUNCE_SECONDS = 2.5
 PUSH_RETRIES = 2
-PRIVATE_DIR_NAME = "private_files"
-PUBLIC_DIR_NAME = "files"
-PASSPHRASE_FILE_NAME = ".print-drive-passphrase"
+DEFAULT_PRIVATE_DIR = "private_files"
+DEFAULT_PUBLIC_DIR = "files"
+DEFAULT_PASSPHRASE_FILE = ".print-drive-passphrase"
 ENCRYPT_SCRIPT_NAME = "encrypt_files.mjs"
+SCRIPT_DIR = Path(__file__).resolve().parent
 
 IGNORED_NAMES = {
     ".DS_Store",
@@ -35,13 +42,43 @@ IGNORED_PREFIXES = (
 )
 
 
+def get_project_root():
+    value = os.environ.get("PRINT_DRIVE_ROOT")
+    return Path(value).expanduser().resolve() if value else SCRIPT_DIR
+
+
+def resolve_project_path(project_root, env_name, default_value):
+    value = os.environ.get(env_name, default_value)
+    path = Path(value).expanduser()
+    return path.resolve() if path.is_absolute() else (project_root / path).resolve()
+
+
+def display_path(project_root, path):
+    try:
+        return str(path.relative_to(project_root))
+    except ValueError:
+        return str(path)
+
+
+def validate_dependencies():
+    missing = []
+    for command in ("node", "git"):
+        if shutil.which(command) is None:
+            missing.append(command)
+
+    if missing:
+        print(f"Missing required command(s): {', '.join(missing)}.")
+        print("Install them and make sure they are available on PATH before running auto_sync.py.")
+        sys.exit(1)
+
+
 class SyncHandler(FileSystemEventHandler):
-    def __init__(self, base_dir):
+    def __init__(self, base_dir, private_dir, public_dir, passphrase_file):
         self.base_dir = Path(base_dir)
-        self.public_dir = self.base_dir / PUBLIC_DIR_NAME
-        self.private_dir = self.base_dir / PRIVATE_DIR_NAME
-        self.passphrase_file = self.base_dir / PASSPHRASE_FILE_NAME
-        self.encrypt_script = self.base_dir / ENCRYPT_SCRIPT_NAME
+        self.public_dir = Path(public_dir)
+        self.private_dir = Path(private_dir)
+        self.passphrase_file = Path(passphrase_file)
+        self.encrypt_script = SCRIPT_DIR / ENCRYPT_SCRIPT_NAME
         self.timer = None
         self.timer_lock = threading.Lock()
         self.sync_lock = threading.Lock()
@@ -135,6 +172,12 @@ class SyncHandler(FileSystemEventHandler):
     def run_git(self, args, check=True):
         return self.run_command(["git", *args], check=check)
 
+    def git_path(self, path):
+        try:
+            return Path(path).resolve().relative_to(self.base_dir).as_posix()
+        except ValueError:
+            return str(path)
+
     def encrypt_private_files(self):
         has_passphrase = self.passphrase_file.exists() or bool(os.environ.get("PRINT_DRIVE_PASSPHRASE"))
         if not self.encrypt_script.exists():
@@ -144,12 +187,12 @@ class SyncHandler(FileSystemEventHandler):
         if not has_passphrase:
             print(
                 "Private files changed, but no local passphrase is configured. "
-                f"Run `node {ENCRYPT_SCRIPT_NAME}` manually or create {PASSPHRASE_FILE_NAME}."
+                f"Run `node {ENCRYPT_SCRIPT_NAME}` manually or create {display_path(self.base_dir, self.passphrase_file)}."
             )
             return
 
         print("Encrypting private files before sync...")
-        result = self.run_command(["node", ENCRYPT_SCRIPT_NAME])
+        result = self.run_command(["node", str(self.encrypt_script)])
         if result.stdout:
             print(result.stdout.strip())
         if result.stderr:
@@ -157,8 +200,9 @@ class SyncHandler(FileSystemEventHandler):
 
     def sync_to_github(self):
         try:
-            self.run_git(["add", "files/"])
-            status_result = self.run_git(["status", "--porcelain", "--", "files/"])
+            public_git_path = self.git_path(self.public_dir)
+            self.run_git(["add", public_git_path])
+            status_result = self.run_git(["status", "--porcelain", "--", public_git_path])
 
             if not status_result.stdout.strip():
                 print("No encrypted file changes to commit.")
@@ -202,18 +246,24 @@ class SyncHandler(FileSystemEventHandler):
 
 
 if __name__ == "__main__":
-    base_dir = Path(__file__).resolve().parent
-    public_dir = base_dir / PUBLIC_DIR_NAME
-    private_dir = base_dir / PRIVATE_DIR_NAME
-    public_dir.mkdir(exist_ok=True)
-    private_dir.mkdir(exist_ok=True)
+    validate_dependencies()
 
-    event_handler = SyncHandler(base_dir)
+    base_dir = get_project_root()
+    public_dir = resolve_project_path(base_dir, "PRINT_DRIVE_OUTPUT_DIR", DEFAULT_PUBLIC_DIR)
+    private_dir = resolve_project_path(base_dir, "PRINT_DRIVE_SOURCE_DIR", DEFAULT_PRIVATE_DIR)
+    passphrase_file = resolve_project_path(base_dir, "PRINT_DRIVE_PASSWORD_FILE", DEFAULT_PASSPHRASE_FILE)
+    public_dir.mkdir(parents=True, exist_ok=True)
+    private_dir.mkdir(parents=True, exist_ok=True)
+
+    event_handler = SyncHandler(base_dir, private_dir, public_dir, passphrase_file)
     observer = Observer()
     observer.schedule(event_handler, path=str(public_dir), recursive=False)
     observer.schedule(event_handler, path=str(private_dir), recursive=False)
 
-    print(f"Starting to monitor {private_dir} and {public_dir} for changes...")
+    print(
+        "Starting to monitor "
+        f"{display_path(base_dir, private_dir)} and {display_path(base_dir, public_dir)} for changes..."
+    )
     observer.start()
 
     try:

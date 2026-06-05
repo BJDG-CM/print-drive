@@ -1,0 +1,11 @@
+{
+  "name": "print-drive",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node scripts/check_syntax.mjs && node scripts/py_compile_check.mjs && node check_public_files.mjs",
+    "test": "node scripts/smoke_test.mjs",
+    "build": "node scripts/build_dist.mjs"
+  }
+}

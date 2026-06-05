@@ -12,11 +12,14 @@ import {
     readdir,
     readFile,
     rm,
-    stat,
     writeFile
 } from 'node:fs/promises';
 import path from 'node:path';
 import { constants } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+import { getExtension, getFileType, getMimeType } from './file_types.js';
+import { displayPath, getConfiguredPaths } from './paths.mjs';
+import { assertPublicFilesClean, isEncryptedBinName } from './public_files_guard.mjs';
 
 const DEFAULT_SOURCE_DIR = 'private_files';
 const DEFAULT_OUTPUT_DIR = 'files';
@@ -30,47 +33,19 @@ const IGNORED_NAMES = new Set(['.DS_Store', 'Thumbs.db', 'desktop.ini']);
 const IGNORED_PREFIXES = ['.', '~$'];
 const IGNORED_SUFFIXES = ['.tmp', '.temp', '.crdownload', '.download', '.part', '.swp'];
 
-const MIME_TYPES = new Map([
-    ['pdf', 'application/pdf'],
-    ['png', 'image/png'],
-    ['jpg', 'image/jpeg'],
-    ['jpeg', 'image/jpeg'],
-    ['gif', 'image/gif'],
-    ['webp', 'image/webp'],
-    ['bmp', 'image/bmp'],
-    ['svg', 'image/svg+xml'],
-    ['txt', 'text/plain'],
-    ['csv', 'text/csv'],
-    ['md', 'text/markdown'],
-    ['doc', 'application/msword'],
-    ['docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
-    ['ppt', 'application/vnd.ms-powerpoint'],
-    ['pptx', 'application/vnd.openxmlformats-officedocument.presentationml.presentation'],
-    ['xls', 'application/vnd.ms-excel'],
-    ['xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
-    ['hwp', 'application/x-hwp'],
-    ['hwpx', 'application/x-hwpx'],
-    ['zip', 'application/zip']
-]);
-
-const FILE_TYPES = {
-    pdf: new Set(['pdf']),
-    image: new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'heic']),
-    document: new Set(['doc', 'docx', 'hwp', 'hwpx', 'ppt', 'pptx', 'xls', 'xlsx', 'txt', 'csv', 'md']),
-    archive: new Set(['zip', '7z', 'rar', 'tar', 'gz'])
-};
-
-async function main() {
-    const options = parseArgs(process.argv.slice(2));
-    const baseDir = process.cwd();
-    const sourceDir = path.resolve(baseDir, options.source);
-    const outputDir = path.resolve(baseDir, options.output);
+export async function main(args = process.argv.slice(2)) {
+    const options = parseArgs(args);
+    const { sourceDir, outputDir, passwordFile } = getConfiguredPaths(options);
     const manifestPath = path.join(outputDir, options.manifestName);
 
     await mkdir(sourceDir, { recursive: true });
     await mkdir(outputDir, { recursive: true });
+    await assertPublicFilesClean(outputDir, {
+        manifestName: options.manifestName,
+        displayDir: displayPath(outputDir)
+    });
 
-    const passphrase = await getPassphrase(options);
+    const passphrase = await getPassphrase(options, passwordFile);
     if (passphrase.length < 12) {
         console.warn('Warning: short passphrases are convenient but weak against offline guessing.');
     }
@@ -148,17 +123,20 @@ async function main() {
     };
 
     await writeFile(manifestPath, `${JSON.stringify(envelope, null, 2)}\n`, 'utf8');
-    printPlaintextWarnings(outputDir);
-    console.log(`Encrypted ${sourceFiles.length} file(s) into ${path.relative(baseDir, outputDir) || '.'}.`);
-    console.log(`Wrote ${path.relative(baseDir, manifestPath)}.`);
+    await assertPublicFilesClean(outputDir, {
+        manifestName: options.manifestName,
+        displayDir: displayPath(outputDir)
+    });
+    console.log(`Encrypted ${sourceFiles.length} file(s) into ${displayPath(outputDir)}.`);
+    console.log(`Wrote ${displayPath(manifestPath)}.`);
 }
 
 function parseArgs(args) {
     const options = {
-        source: DEFAULT_SOURCE_DIR,
-        output: DEFAULT_OUTPUT_DIR,
+        source: null,
+        output: null,
         manifestName: DEFAULT_MANIFEST_NAME,
-        passwordFile: DEFAULT_PASSWORD_FILE,
+        passwordFile: null,
         initPassphrase: false,
         rotatePassphrase: false,
         iterations: DEFAULT_ITERATIONS,
@@ -224,31 +202,30 @@ Options:
 `);
 }
 
-async function getPassphrase(options) {
+async function getPassphrase(options, passwordFile) {
     if (process.env.PRINT_DRIVE_PASSPHRASE) {
         return process.env.PRINT_DRIVE_PASSPHRASE;
     }
 
-    const passwordPath = path.resolve(process.cwd(), options.passwordFile);
     if (options.rotatePassphrase) {
         const passphrase = generatePassphrase();
-        await writePassphraseFile(passwordPath, passphrase);
-        console.log(`Rotated local passphrase file: ${options.passwordFile}`);
+        await writePassphraseFile(passwordFile, passphrase);
+        console.log(`Rotated local passphrase file: ${displayPath(passwordFile)}`);
         return passphrase;
     }
 
-    if (await exists(passwordPath)) {
-        const value = (await readFile(passwordPath, 'utf8')).trim();
+    if (await exists(passwordFile)) {
+        const value = (await readFile(passwordFile, 'utf8')).trim();
         if (!value) {
-            throw new Error(`${options.passwordFile} is empty.`);
+            throw new Error(`${displayPath(passwordFile)} is empty.`);
         }
         return value;
     }
 
     if (options.initPassphrase) {
         const passphrase = generatePassphrase();
-        await writePassphraseFile(passwordPath, passphrase);
-        console.log(`Created local passphrase file: ${options.passwordFile}`);
+        await writePassphraseFile(passwordFile, passphrase);
+        console.log(`Created local passphrase file: ${displayPath(passwordFile)}`);
         return passphrase;
     }
 
@@ -355,7 +332,7 @@ async function cleanEncryptedOutput(outputDir, manifestName) {
             continue;
         }
 
-        if (entry.name.endsWith('.bin')) {
+        if (isEncryptedBinName(entry.name)) {
             try {
                 await rm(path.join(outputDir, entry.name), { force: true });
             } catch (error) {
@@ -385,31 +362,6 @@ function addPadding(buffer, paddingBytes) {
     return Buffer.concat([buffer, randomBytes(paddingBytes - remainder)]);
 }
 
-function getExtension(name) {
-    const lastDot = name.lastIndexOf('.');
-    return lastDot > -1 ? name.slice(lastDot + 1).toLowerCase() : '';
-}
-
-function getFileType(extension) {
-    if (FILE_TYPES.pdf.has(extension)) {
-        return 'pdf';
-    }
-    if (FILE_TYPES.image.has(extension)) {
-        return 'image';
-    }
-    if (FILE_TYPES.document.has(extension)) {
-        return 'document';
-    }
-    if (FILE_TYPES.archive.has(extension)) {
-        return 'archive';
-    }
-    return 'other';
-}
-
-function getMimeType(extension) {
-    return MIME_TYPES.get(extension) || 'application/octet-stream';
-}
-
 function createFileAad(fileId) {
     return `print-drive:file:${fileId}:v1`;
 }
@@ -423,31 +375,9 @@ async function exists(filePath) {
     }
 }
 
-async function printPlaintextWarnings(outputDir) {
-    const entries = await readdir(outputDir, { withFileTypes: true });
-    const plaintextNames = [];
-
-    for (const entry of entries) {
-        if (!entry.isFile()) {
-            continue;
-        }
-
-        if (entry.name !== DEFAULT_MANIFEST_NAME && !entry.name.endsWith('.bin')) {
-            const entryStat = await stat(path.join(outputDir, entry.name));
-            if (entryStat.size > 0) {
-                plaintextNames.push(entry.name);
-            }
-        }
-    }
-
-    if (plaintextNames.length > 0) {
-        console.warn('Warning: plaintext-looking files remain in the public output directory:');
-        plaintextNames.forEach((name) => console.warn(`  - ${name}`));
-        console.warn('Move them to private_files/ or remove them before publishing.');
-    }
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+    main().catch((error) => {
+        console.error(error.message);
+        process.exit(1);
+    });
 }
-
-main().catch((error) => {
-    console.error(error.message);
-    process.exit(1);
-});
