@@ -8,6 +8,7 @@ const JS_FILES = [
     'app.js',
     'crypto.js',
     'file_types.js',
+    'qr.js',
     'ui.js',
     'zip.js',
     'sw.js',

@@ -17,6 +17,7 @@ import {
 } from './crypto.js';
 import { createZipBlob } from './zip.js';
 import { formatSize, setButtonContent } from './ui.js';
+import { drawQrCode } from './qr.js';
 
 const MANIFEST_URL = 'files/manifest.enc';
 const SESSION_KEY = 'print-drive-session-key-v1';
@@ -34,10 +35,16 @@ let isLoading = false;
 let deferredInstallPrompt = null;
 let idleLockTimer = null;
 let activeFilter = 'all';
+let lastSelectedId = null;
+let isZipRunning = false;
+let zipCancelRequested = false;
 let previewState = {
     file: null,
     blob: null,
     objectUrl: null
+};
+let qrState = {
+    link: ''
 };
 
 const collator = new Intl.Collator('ko-KR', { numeric: true, sensitivity: 'base' });
@@ -53,6 +60,7 @@ const dom = {
     authSubmit: document.getElementById('auth-submit'),
     authError: document.getElementById('auth-error'),
     refreshButton: document.getElementById('btn-refresh'),
+    pageQrButton: document.getElementById('btn-page-qr'),
     installButton: document.getElementById('btn-install'),
     lockButton: document.getElementById('btn-lock'),
     searchInput: document.getElementById('search-input'),
@@ -63,12 +71,14 @@ const dom = {
     resultCount: document.getElementById('result-count'),
     selectedCount: document.getElementById('selected-count'),
     selectionModeButton: document.getElementById('btn-selection-mode'),
+    allZipButton: document.getElementById('btn-download-all'),
     selectAllButton: document.getElementById('btn-select-all'),
     clearSelectionButton: document.getElementById('btn-clear-selection'),
     zipButton: document.getElementById('btn-download-selected'),
     fileList: document.getElementById('file-list'),
     loader: document.getElementById('global-loader'),
     loadingMessage: document.getElementById('loading-message'),
+    cancelZipButton: document.getElementById('btn-cancel-zip'),
     toastRoot: document.getElementById('toast-root'),
     previewModal: document.getElementById('preview-modal'),
     previewBackdrop: document.getElementById('preview-backdrop'),
@@ -78,7 +88,16 @@ const dom = {
     previewDownloadButton: document.getElementById('btn-preview-download'),
     previewPrintButton: document.getElementById('btn-preview-print'),
     previewCloseButton: document.getElementById('btn-preview-close'),
-    previewCloseTopButton: document.getElementById('btn-preview-close-top')
+    previewCloseTopButton: document.getElementById('btn-preview-close-top'),
+    qrModal: document.getElementById('qr-modal'),
+    qrBackdrop: document.getElementById('qr-backdrop'),
+    qrTitle: document.getElementById('qr-title'),
+    qrMeta: document.getElementById('qr-meta'),
+    qrCanvas: document.getElementById('qr-canvas'),
+    qrLink: document.getElementById('qr-link'),
+    qrCopyButton: document.getElementById('btn-qr-copy'),
+    qrCloseButton: document.getElementById('btn-qr-close'),
+    qrCloseTopButton: document.getElementById('btn-qr-close-top')
 };
 
 document.addEventListener('DOMContentLoaded', init);
@@ -86,17 +105,23 @@ document.addEventListener('DOMContentLoaded', init);
 function init() {
     bindEvents();
     setButtonContent(dom.refreshButton, 'refresh', '새로고침');
+    setButtonContent(dom.pageQrButton, 'qr', 'QR');
     setButtonContent(dom.installButton, 'plus', '설치');
     setButtonContent(dom.lockButton, 'lock', '잠금');
     setButtonContent(dom.clearSearchButton, 'x', '지우기');
     setButtonContent(dom.selectionModeButton, 'check', '선택');
     setButtonContent(dom.selectAllButton, 'check', '전체');
     setButtonContent(dom.clearSelectionButton, 'x', '해제');
-    setButtonContent(dom.zipButton, 'download', '전체 ZIP 다운로드');
+    setButtonContent(dom.allZipButton, 'download', '전체 ZIP');
+    setButtonContent(dom.zipButton, 'download', '선택 ZIP 다운로드');
+    setButtonContent(dom.cancelZipButton, 'x', '취소');
     setButtonContent(dom.previewDownloadButton, 'download', '다운로드');
     setButtonContent(dom.previewPrintButton, 'print', '인쇄');
     setButtonContent(dom.previewCloseButton, 'x', '닫기');
     setButtonContent(dom.previewCloseTopButton, 'x', '닫기');
+    setButtonContent(dom.qrCopyButton, 'copy', '링크 복사');
+    setButtonContent(dom.qrCloseButton, 'x', '닫기');
+    setButtonContent(dom.qrCloseTopButton, 'x', '닫기');
     setCompactButtonLabels();
     registerServiceWorker();
 
@@ -120,6 +145,7 @@ function init() {
 function bindEvents() {
     dom.passwordForm.addEventListener('submit', handlePasswordSubmit);
     dom.refreshButton.addEventListener('click', () => reloadEncryptedManifest({ manual: true }));
+    dom.pageQrButton.addEventListener('click', () => showQrModal('현재 페이지 QR', getCurrentPageLink(), '현재 페이지'));
     dom.lockButton.addEventListener('click', () => lockDrive());
     dom.searchInput.addEventListener('input', applyFilters);
     dom.clearSearchButton.addEventListener('click', clearSearch);
@@ -128,17 +154,25 @@ function bindEvents() {
     dom.selectionModeButton.addEventListener('click', toggleSelectionMode);
     dom.selectAllButton.addEventListener('click', toggleSelectAll);
     dom.clearSelectionButton.addEventListener('click', clearSelection);
+    dom.allZipButton.addEventListener('click', downloadAllAsZip);
     dom.zipButton.addEventListener('click', downloadSelectedAsZip);
+    dom.cancelZipButton.addEventListener('click', cancelZipDownload);
     dom.installButton.addEventListener('click', promptInstall);
     dom.previewBackdrop.addEventListener('click', closePreviewModal);
     dom.previewCloseButton.addEventListener('click', closePreviewModal);
     dom.previewCloseTopButton.addEventListener('click', closePreviewModal);
     dom.previewDownloadButton.addEventListener('click', downloadPreviewFile);
     dom.previewPrintButton.addEventListener('click', printPreviewFile);
+    dom.qrBackdrop.addEventListener('click', closeQrModal);
+    dom.qrCloseButton.addEventListener('click', closeQrModal);
+    dom.qrCloseTopButton.addEventListener('click', closeQrModal);
+    dom.qrCopyButton.addEventListener('click', copyQrLink);
 
     window.addEventListener('keydown', (event) => {
         if (event.key === 'Escape' && !dom.previewModal.hidden) {
             closePreviewModal();
+        } else if (event.key === 'Escape' && !dom.qrModal.hidden) {
+            closeQrModal();
         }
     });
 
@@ -285,6 +319,7 @@ function promptForFreshPassword() {
     sessionStorage.removeItem(SESSION_KEY);
     decryptKey = null;
     selectedIds.clear();
+    lastSelectedId = null;
     isSelectionMode = false;
     dom.appView.classList.remove('selection-mode');
     dom.passwordInput.value = '';
@@ -314,10 +349,12 @@ function normalizeFile(file, index, fallbackModifiedAt) {
     const extension = file.extension || getExtension(file.name);
     const type = file.type || getFileType(extension);
     const modifiedAt = parseDateValue(file.modifiedAt || fallbackModifiedAt);
+    const displayName = createDisplayName(file.name, extension);
 
     return {
         id: file.id,
         name: file.name,
+        displayName,
         size: Number(file.size || 0),
         encryptedSize: Number(file.encryptedSize || 0),
         extension,
@@ -337,7 +374,9 @@ function applyFilters() {
     dom.clearSearchButton.hidden = query.length === 0;
 
     visibleFiles = allFiles.filter((file) => {
-        const matchesQuery = !query || file.name.toLocaleLowerCase('ko-KR').includes(query);
+        const originalName = file.name.toLocaleLowerCase('ko-KR');
+        const displayName = file.displayName.toLocaleLowerCase('ko-KR');
+        const matchesQuery = !query || originalName.includes(query) || displayName.includes(query);
         const matchesType = activeFilter === 'all' || file.type === activeFilter || (activeFilter === 'other' && file.type === 'archive');
         return matchesQuery && matchesType;
     });
@@ -443,9 +482,9 @@ function createFileItem(file) {
     checkbox.className = 'file-checkbox';
     checkbox.checked = selectedIds.has(file.id);
     checkbox.setAttribute('aria-label', `${file.name} 선택`);
-    checkbox.addEventListener('click', (event) => event.stopPropagation());
-    checkbox.addEventListener('change', () => {
-        setFileSelection(file.id, checkbox.checked);
+    checkbox.addEventListener('click', (event) => {
+        event.stopPropagation();
+        handleSelectionClick(file.id, event.shiftKey, checkbox.checked);
     });
 
     const badge = document.createElement('span');
@@ -456,23 +495,36 @@ function createFileItem(file) {
     const info = document.createElement('div');
     info.className = 'file-info';
 
+    const nameRow = document.createElement('div');
+    nameRow.className = 'file-name-row';
+
     const name = document.createElement('div');
     name.className = 'file-name';
-    name.textContent = file.name;
     name.title = file.name;
+    renderHighlightedName(name, file.displayName, dom.searchInput.value.trim());
+
+    const freshness = getFreshnessBadge(file);
+    if (freshness) {
+        const freshnessBadge = document.createElement('span');
+        freshnessBadge.className = `freshness-badge ${freshness.kind}`;
+        freshnessBadge.textContent = freshness.label;
+        nameRow.append(name, freshnessBadge);
+    } else {
+        nameRow.append(name);
+    }
 
     const meta = document.createElement('div');
     meta.className = 'file-meta';
-    meta.textContent = `${FILE_TYPE_LABELS[file.type] || FILE_TYPE_LABELS.other} · ${formatSize(file.size)} · 업데이트 ${formatDateTime(file.modifiedAt)}`;
+    meta.textContent = `${getExtensionLabel(file)} · ${FILE_TYPE_LABELS[file.type] || FILE_TYPE_LABELS.other} · ${formatSize(file.size)} · 업데이트 ${formatDateTime(file.modifiedAt)}`;
 
-    info.append(name, meta);
+    info.append(nameRow, meta);
 
     const actions = document.createElement('div');
     actions.className = 'file-actions';
 
     const previewButton = document.createElement('button');
     previewButton.type = 'button';
-    previewButton.className = 'secondary preview-action';
+    previewButton.className = isPreviewableFile(file) ? 'preview-action' : 'secondary preview-action';
     previewButton.title = isPreviewableFile(file) ? '미리보기' : '이 형식은 미리보기를 지원하지 않습니다.';
     previewButton.disabled = !isPreviewableFile(file);
     setButtonContent(previewButton, 'open', isPreviewableFile(file) ? '미리보기' : '미리보기 불가');
@@ -483,7 +535,7 @@ function createFileItem(file) {
 
     const downloadButton = document.createElement('button');
     downloadButton.type = 'button';
-    downloadButton.className = 'download-action';
+    downloadButton.className = isPreviewableFile(file) ? 'secondary download-action' : 'download-action';
     downloadButton.title = '다운로드';
     setButtonContent(downloadButton, 'download', '다운로드');
     downloadButton.addEventListener('click', async (event) => {
@@ -491,12 +543,43 @@ function createFileItem(file) {
         await downloadSingleFile(file.id);
     });
 
-    actions.append(previewButton, downloadButton);
+    const moreMenu = document.createElement('details');
+    moreMenu.className = 'more-menu';
+    moreMenu.addEventListener('click', (event) => event.stopPropagation());
 
-    item.addEventListener('click', () => {
-        if (isSelectionMode) {
-            setFileSelection(file.id, !selectedIds.has(file.id));
+    const moreSummary = document.createElement('summary');
+    moreSummary.title = '더보기';
+    moreSummary.setAttribute('aria-label', `${file.name} 더보기`);
+    setButtonContent(moreSummary, 'more', '더보기');
+
+    const moreList = document.createElement('div');
+    moreList.className = 'more-menu-list';
+
+    const qrButton = document.createElement('button');
+    qrButton.type = 'button';
+    qrButton.className = 'ghost';
+    setButtonContent(qrButton, 'qr', 'QR 보기');
+    qrButton.addEventListener('click', (event) => {
+        event.stopPropagation();
+        moreMenu.open = false;
+        showQrModal(`${file.displayName} QR`, createFileAppLink(file), file.name);
+    });
+
+    moreList.append(qrButton);
+    moreMenu.append(moreSummary, moreList);
+    actions.append(previewButton, downloadButton, moreMenu);
+
+    item.addEventListener('click', async (event) => {
+        if (event.target.closest('button, input, summary, details, a')) {
+            return;
         }
+
+        if (isSelectionMode) {
+            handleSelectionClick(file.id, event.shiftKey, !selectedIds.has(file.id));
+            return;
+        }
+
+        await runPrimaryFileAction(file);
     });
 
     item.append(checkbox, badge, info, actions);
@@ -555,6 +638,76 @@ function getFetchErrorMessage(error) {
     return '비밀번호가 바뀌었거나 암호화 파일이 갱신 중일 수 있습니다. 잠시 후 다시 시도해 주세요.';
 }
 
+function createDisplayName(name, extension) {
+    const suffix = extension ? `.${extension}` : '';
+    const baseName = suffix && name.toLowerCase().endsWith(suffix.toLowerCase())
+        ? name.slice(0, -suffix.length)
+        : name;
+    return baseName
+        .replace(/[_\uFF3F-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim() || baseName;
+}
+
+function getExtensionLabel(file) {
+    return file.extension ? file.extension.toUpperCase() : 'FILE';
+}
+
+function getFreshnessBadge(file) {
+    const rawAgeMs = Date.now() - file.modifiedAt.getTime();
+    if (!Number.isFinite(rawAgeMs)) {
+        return null;
+    }
+    const ageMs = Math.max(0, rawAgeMs);
+
+    if (ageMs <= 24 * 60 * 60 * 1000) {
+        return { kind: 'new', label: 'NEW' };
+    }
+
+    if (ageMs <= 7 * 24 * 60 * 60 * 1000) {
+        return { kind: 'recent', label: '최근' };
+    }
+
+    return null;
+}
+
+function renderHighlightedName(element, value, query) {
+    element.replaceChildren();
+    if (!query) {
+        element.textContent = value;
+        return;
+    }
+
+    const lowerValue = value.toLocaleLowerCase('ko-KR');
+    const lowerQuery = query.toLocaleLowerCase('ko-KR');
+    let cursor = 0;
+
+    while (cursor < value.length) {
+        const matchIndex = lowerValue.indexOf(lowerQuery, cursor);
+        if (matchIndex === -1) {
+            element.append(document.createTextNode(value.slice(cursor)));
+            break;
+        }
+
+        if (matchIndex > cursor) {
+            element.append(document.createTextNode(value.slice(cursor, matchIndex)));
+        }
+
+        const mark = document.createElement('mark');
+        mark.textContent = value.slice(matchIndex, matchIndex + query.length);
+        element.append(mark);
+        cursor = matchIndex + query.length;
+    }
+}
+
+async function runPrimaryFileAction(file) {
+    if (isPreviewableFile(file)) {
+        await openFile(file.id);
+    } else {
+        await downloadSingleFile(file.id);
+    }
+}
+
 function setFileSelection(fileId, shouldSelect) {
     if (shouldSelect) {
         selectedIds.add(fileId);
@@ -562,6 +715,30 @@ function setFileSelection(fileId, shouldSelect) {
         selectedIds.delete(fileId);
     }
 
+    updateSelection();
+}
+
+function handleSelectionClick(fileId, shiftKey, shouldSelect) {
+    if (shiftKey && lastSelectedId && selectedIds.has(lastSelectedId)) {
+        selectRange(lastSelectedId, fileId);
+    } else {
+        setFileSelection(fileId, shouldSelect);
+    }
+
+    lastSelectedId = fileId;
+}
+
+function selectRange(anchorId, targetId) {
+    const start = visibleFiles.findIndex((file) => file.id === anchorId);
+    const end = visibleFiles.findIndex((file) => file.id === targetId);
+    if (start === -1 || end === -1) {
+        selectedIds.add(targetId);
+        updateSelection();
+        return;
+    }
+
+    const [from, to] = start < end ? [start, end] : [end, start];
+    visibleFiles.slice(from, to + 1).forEach((file) => selectedIds.add(file.id));
     updateSelection();
 }
 
@@ -575,6 +752,7 @@ function setSelectionMode(enabled) {
 
     if (!isSelectionMode) {
         selectedIds.clear();
+        lastSelectedId = null;
     }
 
     updateSelection();
@@ -600,12 +778,13 @@ function updateSelection() {
     dom.selectedCount.textContent = `선택 ${selectedCount}개 · ${formatSize(selectedSize)}`;
     dom.selectedCount.hidden = !isSelectionMode;
     dom.selectionModeButton.disabled = isLoading || visibleFiles.length === 0;
+    dom.allZipButton.disabled = isLoading || isZipRunning || allFiles.length === 0;
     dom.selectionModeButton.classList.toggle('active', isSelectionMode);
     setButtonContent(dom.selectionModeButton, isSelectionMode ? 'x' : 'check', isSelectionMode ? '완료' : '선택');
     dom.selectAllButton.disabled = isLoading || !isSelectionMode || visibleFiles.length === 0;
     dom.clearSelectionButton.disabled = isLoading || !isSelectionMode || selectedCount === 0;
-    dom.zipButton.disabled = isLoading || !isSelectionMode || selectedCount === 0;
-    setButtonContent(dom.zipButton, 'download', selectedCount > 0 ? `${selectedCount}개 ZIP 다운로드` : '전체 ZIP 다운로드');
+    dom.zipButton.disabled = isLoading || isZipRunning || !isSelectionMode || selectedCount === 0;
+    setButtonContent(dom.zipButton, 'download', selectedCount > 0 ? `${selectedCount}개 선택 ZIP` : '선택 ZIP 다운로드');
     setButtonContent(dom.selectAllButton, allVisibleSelected ? 'x' : 'check', allVisibleSelected ? '전체 해제' : '전체');
 }
 
@@ -623,11 +802,14 @@ function toggleSelectAll() {
         }
     });
 
+    lastSelectedId = visibleFiles.length > 0 ? visibleFiles[visibleFiles.length - 1].id : lastSelectedId;
     updateSelection();
 }
 
 function clearSelection() {
     selectedIds.clear();
+    lastSelectedId = null;
+    lastSelectedId = null;
     updateSelection();
 }
 
@@ -792,13 +974,38 @@ async function downloadSelectedAsZip() {
         return;
     }
 
-    showOverlay(`선택한 ${selectedFiles.length}개 파일을 복호화하는 중입니다...`);
+    await downloadFilesAsZip(selectedFiles, '선택 ZIP');
+}
+
+async function downloadAllAsZip() {
+    if (allFiles.length === 0) {
+        return;
+    }
+
+    await downloadFilesAsZip(allFiles, '전체 ZIP');
+}
+
+async function downloadFilesAsZip(files, label) {
+    if (isZipRunning) {
+        return;
+    }
+
+    isZipRunning = true;
+    zipCancelRequested = false;
+    dom.cancelZipButton.hidden = false;
+    dom.cancelZipButton.disabled = false;
+    updateSelection();
+    showOverlay(`${label} 준비 중입니다...`);
 
     try {
         const zipEntries = [];
-        for (let index = 0; index < selectedFiles.length; index += 1) {
-            const file = selectedFiles[index];
-            dom.loadingMessage.textContent = `[${index + 1} / ${selectedFiles.length}] ${file.name} 복호화 중입니다...`;
+        for (let index = 0; index < files.length; index += 1) {
+            if (zipCancelRequested) {
+                throw new Error('ZIP_CANCELLED');
+            }
+
+            const file = files[index];
+            dom.loadingMessage.textContent = `${label} 생성 중: ${index + 1} / ${files.length} · ${file.displayName}`;
             const decrypted = await fetchAndDecryptFile(file, decryptKey);
             zipEntries.push({
                 name: `${ZIP_FOLDER_NAME}/${file.name}`,
@@ -809,14 +1016,32 @@ async function downloadSelectedAsZip() {
         dom.loadingMessage.textContent = 'ZIP 파일을 생성하는 중입니다...';
         const zipBlob = createZipBlob(zipEntries);
         downloadBlob(zipBlob, ZIP_FILE_NAME);
-        clearSelection();
-        showToast('ZIP 생성이 완료되었습니다.', 'success');
+        if (label === '선택 ZIP') {
+            clearSelection();
+        }
+        showToast(`${label} 다운로드를 시작했습니다.`, 'success');
     } catch (error) {
+        if (error.message === 'ZIP_CANCELLED') {
+            showToast('ZIP 생성을 취소했습니다.', 'warning');
+            return;
+        }
+
         console.error(error);
         showToast('ZIP 생성 중 오류가 발생했습니다.', 'error');
     } finally {
+        isZipRunning = false;
+        zipCancelRequested = false;
+        dom.cancelZipButton.hidden = true;
+        dom.cancelZipButton.disabled = false;
         hideOverlay();
+        updateSelection();
     }
+}
+
+function cancelZipDownload() {
+    zipCancelRequested = true;
+    dom.cancelZipButton.disabled = true;
+    dom.loadingMessage.textContent = 'ZIP 생성을 취소하는 중입니다...';
 }
 
 
@@ -824,6 +1049,71 @@ async function downloadSelectedAsZip() {
 
 
 
+
+function showQrModal(title, link, meta) {
+    qrState = { link };
+    dom.qrTitle.textContent = title;
+    dom.qrMeta.textContent = meta;
+    dom.qrLink.textContent = link;
+
+    try {
+        drawQrCode(dom.qrCanvas, link);
+        dom.qrCanvas.hidden = false;
+    } catch (error) {
+        console.error(error);
+        dom.qrCanvas.hidden = true;
+        dom.qrLink.textContent = `${link}\nQR을 만들 수 없습니다. 링크 복사를 사용해 주세요.`;
+    }
+
+    dom.qrModal.hidden = false;
+    dom.qrCopyButton.focus();
+}
+
+function closeQrModal() {
+    qrState = { link: '' };
+    dom.qrModal.hidden = true;
+}
+
+async function copyQrLink() {
+    if (!qrState.link) {
+        return;
+    }
+
+    try {
+        await copyText(qrState.link);
+        showToast('링크를 복사했습니다.', 'success');
+    } catch (error) {
+        console.error(error);
+        showToast('링크 복사에 실패했습니다.', 'error');
+    }
+}
+
+function getCurrentPageLink() {
+    const url = new URL(location.href);
+    url.hash = '';
+    return url.toString();
+}
+
+async function copyText(text) {
+    if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return;
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand('copy');
+    textarea.remove();
+
+    if (!copied) {
+        throw new Error('Clipboard copy failed.');
+    }
+}
 
 function createFileAppLink(file) {
     const url = new URL(location.href);
@@ -865,6 +1155,7 @@ function lockDrive(options = {}) {
     activeFilter = 'all';
     updateFilterChips();
     closePreviewModal({ silent: true });
+    closeQrModal();
     dom.appView.classList.remove('selection-mode');
     sessionStorage.removeItem(SESSION_KEY);
     dom.searchInput.value = '';
@@ -903,9 +1194,10 @@ function setLoading(loading, message) {
     });
     dom.sortSelect.disabled = loading;
     dom.selectionModeButton.disabled = loading || visibleFiles.length === 0;
+    dom.allZipButton.disabled = loading || isZipRunning || allFiles.length === 0;
     dom.selectAllButton.disabled = loading || !isSelectionMode || visibleFiles.length === 0;
     dom.clearSelectionButton.disabled = loading || !isSelectionMode || selectedIds.size === 0;
-    dom.zipButton.disabled = loading || !isSelectionMode || selectedIds.size === 0;
+    dom.zipButton.disabled = loading || isZipRunning || !isSelectionMode || selectedIds.size === 0;
 
     if (loading && dom.appView.hidden) {
         showView(dom.loadingView);
@@ -1004,10 +1296,11 @@ function cssEscape(value) {
 
 
 function setCompactButtonLabels() {
-    [
-        [dom.refreshButton, '새로고침'],
-        [dom.lockButton, '잠금'],
-        [dom.installButton, '앱으로 설치']
+            [
+                [dom.pageQrButton, '현재 페이지 QR'],
+                [dom.refreshButton, '새로고침'],
+                [dom.lockButton, '잠금'],
+                [dom.installButton, '앱으로 설치']
     ].forEach(([button, label]) => {
         button.title = label;
         button.setAttribute('aria-label', label);

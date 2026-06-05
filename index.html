@@ -44,6 +44,7 @@
             <div class="loading-overlay" id="global-loader" hidden>
                 <div class="spinner" aria-hidden="true"></div>
                 <p class="loading-text" id="loading-message">처리 중입니다...</p>
+                <button class="secondary" type="button" id="btn-cancel-zip" hidden>취소</button>
             </div>
 
             <header class="header">
@@ -56,6 +57,7 @@
                 </div>
                 <div class="header-actions">
                     <button class="secondary" type="button" id="btn-install" hidden>설치</button>
+                    <button class="secondary" type="button" id="btn-page-qr">QR</button>
                     <button class="secondary" type="button" id="btn-refresh">새로고침</button>
                     <button class="secondary" type="button" id="btn-lock">잠금</button>
                 </div>
@@ -86,6 +88,7 @@
                     <span id="file-summary">0개 파일 · 0 B · 최근 업데이트 없음</span>
                     <span id="result-count">0개 표시</span>
                     <div class="list-tools">
+                        <button class="secondary" type="button" id="btn-download-all" disabled>전체 ZIP</button>
                         <span class="selection-count" id="selected-count" hidden>선택 0개</span>
                         <button class="secondary selection-toggle" type="button" id="btn-selection-mode">선택</button>
                     </div>
@@ -95,7 +98,7 @@
             <section class="action-bar" aria-label="선택 작업">
                 <button class="secondary" type="button" id="btn-select-all">전체</button>
                 <button class="secondary" type="button" id="btn-clear-selection" disabled>해제</button>
-                <button type="button" id="btn-download-selected" disabled>전체 ZIP 다운로드</button>
+                <button type="button" id="btn-download-selected" disabled>선택 ZIP 다운로드</button>
             </section>
 
             <ul id="file-list" aria-live="polite" tabindex="-1"></ul>
@@ -121,6 +124,27 @@
                 <button type="button" id="btn-preview-download">다운로드</button>
                 <button class="secondary" type="button" id="btn-preview-print">인쇄</button>
                 <button class="secondary" type="button" id="btn-preview-close">닫기</button>
+            </footer>
+        </div>
+    </section>
+
+    <section class="qr-modal" id="qr-modal" role="dialog" aria-modal="true" aria-labelledby="qr-title" hidden>
+        <div class="qr-backdrop" id="qr-backdrop"></div>
+        <div class="qr-panel">
+            <header class="qr-header">
+                <div>
+                    <p class="preview-kicker" id="qr-meta">QR 공유</p>
+                    <h2 id="qr-title">현재 페이지 QR</h2>
+                </div>
+                <button class="secondary icon-only" type="button" id="btn-qr-close-top" aria-label="QR 닫기">닫기</button>
+            </header>
+            <div class="qr-body">
+                <canvas id="qr-canvas" width="280" height="280"></canvas>
+                <p id="qr-link" class="qr-link"></p>
+            </div>
+            <footer class="qr-footer">
+                <button type="button" id="btn-qr-copy">링크 복사</button>
+                <button class="secondary" type="button" id="btn-qr-close">닫기</button>
             </footer>
         </div>
     </section>
