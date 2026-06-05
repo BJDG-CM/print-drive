@@ -30,7 +30,7 @@ export async function importAesKey(keyBytes) {
         keyBytes,
         'AES-GCM',
         false,
-        ['decrypt']
+        ['decrypt', 'encrypt']
     );
 }
 
@@ -73,6 +73,25 @@ export async function fetchAndDecryptFile(file, decryptKey) {
     const bytes = new Uint8Array(paddedPlaintext).slice(0, file.size);
     await verifySha256(bytes, file.sha256);
     return { file, bytes };
+}
+
+export async function encryptBytes(bytes, key, iv, aad) {
+    const encrypted = await crypto.subtle.encrypt(
+        {
+            name: 'AES-GCM',
+            iv,
+            additionalData: cryptoTextEncoder.encode(aad)
+        },
+        key,
+        bytes
+    );
+
+    return new Uint8Array(encrypted);
+}
+
+export async function sha256Hex(bytes) {
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    return bytesToHex(new Uint8Array(digest));
 }
 
 async function verifySha256(bytes, expectedHash) {

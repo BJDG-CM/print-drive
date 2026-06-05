@@ -8,12 +8,17 @@ import {
     isTextPreviewableFile
 } from './file_types.js';
 import {
+    MANIFEST_AAD,
     base64ToBytes,
     bytesToBase64,
+    bytesToHex,
+    createFileAad,
     decryptManifest,
     deriveKeyBytes,
+    encryptBytes,
     fetchAndDecryptFile,
-    importAesKey
+    importAesKey,
+    sha256Hex
 } from './crypto.js';
 import { createZipBlob } from './zip.js';
 import { formatSize, setButtonContent } from './ui.js';
@@ -23,6 +28,7 @@ const MANIFEST_URL = 'files/manifest.enc';
 const SESSION_KEY = 'print-drive-session-key-v1';
 const ZIP_FILE_NAME = 'Print_Drive_Download_Files.zip';
 const ZIP_FOLDER_NAME = 'Print_Drive_Download_Files';
+const UPDATE_ZIP_FILE_NAME = 'Print_Drive_Encrypted_Update.zip';
 const IDLE_LOCK_MS = 10 * 60 * 1000;
 
 let manifestEnvelope = null;
@@ -38,6 +44,7 @@ let activeFilter = 'all';
 let lastSelectedId = null;
 let isZipRunning = false;
 let zipCancelRequested = false;
+let isUploadRunning = false;
 let previewState = {
     file: null,
     blob: null,
@@ -49,6 +56,7 @@ let qrState = {
 
 const collator = new Intl.Collator('ko-KR', { numeric: true, sensitivity: 'base' });
 const previewTextDecoder = new TextDecoder('utf-8', { fatal: false });
+const appTextEncoder = new TextEncoder();
 
 const dom = {
     authView: document.getElementById('auth-view'),
@@ -72,6 +80,10 @@ const dom = {
     selectedCount: document.getElementById('selected-count'),
     selectionModeButton: document.getElementById('btn-selection-mode'),
     allZipButton: document.getElementById('btn-download-all'),
+    dropZone: document.getElementById('drop-zone'),
+    uploadInput: document.getElementById('upload-input'),
+    uploadPickButton: document.getElementById('btn-upload-pick'),
+    uploadStatus: document.getElementById('upload-status'),
     selectAllButton: document.getElementById('btn-select-all'),
     clearSelectionButton: document.getElementById('btn-clear-selection'),
     zipButton: document.getElementById('btn-download-selected'),
@@ -113,6 +125,7 @@ function init() {
     setButtonContent(dom.selectAllButton, 'check', '전체');
     setButtonContent(dom.clearSelectionButton, 'x', '해제');
     setButtonContent(dom.allZipButton, 'download', '전체 ZIP');
+    setButtonContent(dom.uploadPickButton, 'upload', '파일 선택');
     setButtonContent(dom.zipButton, 'download', '선택 ZIP 다운로드');
     setButtonContent(dom.cancelZipButton, 'x', '취소');
     setButtonContent(dom.previewDownloadButton, 'download', '다운로드');
@@ -155,6 +168,12 @@ function bindEvents() {
     dom.selectAllButton.addEventListener('click', toggleSelectAll);
     dom.clearSelectionButton.addEventListener('click', clearSelection);
     dom.allZipButton.addEventListener('click', downloadAllAsZip);
+    dom.uploadPickButton.addEventListener('click', () => dom.uploadInput.click());
+    dom.uploadInput.addEventListener('change', () => handleUploadFiles(dom.uploadInput.files));
+    dom.dropZone.addEventListener('dragenter', handleUploadDrag);
+    dom.dropZone.addEventListener('dragover', handleUploadDrag);
+    dom.dropZone.addEventListener('dragleave', handleUploadDragLeave);
+    dom.dropZone.addEventListener('drop', handleUploadDrop);
     dom.zipButton.addEventListener('click', downloadSelectedAsZip);
     dom.cancelZipButton.addEventListener('click', cancelZipDownload);
     dom.installButton.addEventListener('click', promptInstall);
@@ -778,12 +797,12 @@ function updateSelection() {
     dom.selectedCount.textContent = `선택 ${selectedCount}개 · ${formatSize(selectedSize)}`;
     dom.selectedCount.hidden = !isSelectionMode;
     dom.selectionModeButton.disabled = isLoading || visibleFiles.length === 0;
-    dom.allZipButton.disabled = isLoading || isZipRunning || allFiles.length === 0;
+    dom.allZipButton.disabled = isLoading || isZipRunning || isUploadRunning || allFiles.length === 0;
     dom.selectionModeButton.classList.toggle('active', isSelectionMode);
     setButtonContent(dom.selectionModeButton, isSelectionMode ? 'x' : 'check', isSelectionMode ? '완료' : '선택');
     dom.selectAllButton.disabled = isLoading || !isSelectionMode || visibleFiles.length === 0;
     dom.clearSelectionButton.disabled = isLoading || !isSelectionMode || selectedCount === 0;
-    dom.zipButton.disabled = isLoading || isZipRunning || !isSelectionMode || selectedCount === 0;
+    dom.zipButton.disabled = isLoading || isZipRunning || isUploadRunning || !isSelectionMode || selectedCount === 0;
     setButtonContent(dom.zipButton, 'download', selectedCount > 0 ? `${selectedCount}개 선택 ZIP` : '선택 ZIP 다운로드');
     setButtonContent(dom.selectAllButton, allVisibleSelected ? 'x' : 'check', allVisibleSelected ? '전체 해제' : '전체');
 }
@@ -808,7 +827,6 @@ function toggleSelectAll() {
 
 function clearSelection() {
     selectedIds.clear();
-    lastSelectedId = null;
     lastSelectedId = null;
     updateSelection();
 }
@@ -1044,6 +1062,197 @@ function cancelZipDownload() {
     dom.loadingMessage.textContent = 'ZIP 생성을 취소하는 중입니다...';
 }
 
+function handleUploadDrag(event) {
+    event.preventDefault();
+    if (isLoading || isUploadRunning || !decryptKey) {
+        return;
+    }
+
+    dom.dropZone.classList.add('dragging');
+    event.dataTransfer.dropEffect = 'copy';
+}
+
+function handleUploadDragLeave(event) {
+    if (!dom.dropZone.contains(event.relatedTarget)) {
+        dom.dropZone.classList.remove('dragging');
+    }
+}
+
+async function handleUploadDrop(event) {
+    event.preventDefault();
+    dom.dropZone.classList.remove('dragging');
+    await handleUploadFiles(event.dataTransfer.files);
+}
+
+async function handleUploadFiles(fileList) {
+    const files = Array.from(fileList || []).filter((file) => file.name && file.size >= 0);
+    dom.uploadInput.value = '';
+
+    if (files.length === 0) {
+        return;
+    }
+
+    if (!decryptKey || !manifestEnvelope) {
+        showToast('먼저 잠금을 해제해 주세요.', 'warning');
+        return;
+    }
+
+    if (isUploadRunning || isLoading) {
+        showToast('다른 작업이 끝난 뒤 다시 시도해 주세요.', 'warning');
+        return;
+    }
+
+    isUploadRunning = true;
+    setUploadControls(false);
+    updateSelection();
+    showOverlay(`암호화 업데이트 준비 중입니다...`);
+
+    try {
+        const uploadFiles = dedupeFilesByName(files);
+        const zipEntries = await createEncryptedUpdateEntries(uploadFiles);
+        const zipBlob = createZipBlob(zipEntries);
+        downloadBlob(zipBlob, UPDATE_ZIP_FILE_NAME);
+        dom.uploadStatus.textContent = `${uploadFiles.length}개 파일 암호화 ZIP을 만들었습니다.`;
+        showToast('암호화 업데이트 ZIP 다운로드를 시작했습니다.', 'success');
+    } catch (error) {
+        console.error(error);
+        dom.uploadStatus.textContent = '업데이트 ZIP 생성에 실패했습니다.';
+        showToast('파일 암호화 업데이트 생성에 실패했습니다.', 'error');
+    } finally {
+        isUploadRunning = false;
+        setUploadControls(true);
+        hideOverlay();
+        updateSelection();
+    }
+}
+
+async function createEncryptedUpdateEntries(uploadFiles) {
+    const replacementNames = new Set(uploadFiles.map((file) => file.name));
+    const manifestFiles = allFiles
+        .filter((file) => !replacementNames.has(file.name))
+        .map(toManifestEntry);
+    const zipEntries = [];
+    const paddingBlockSize = getPaddingBlockSize();
+
+    for (let index = 0; index < uploadFiles.length; index += 1) {
+        const uploadFile = uploadFiles[index];
+        dom.loadingMessage.textContent = `파일 암호화 중: ${index + 1} / ${uploadFiles.length} · ${uploadFile.name}`;
+
+        const fileBytes = new Uint8Array(await uploadFile.arrayBuffer());
+        const id = createRandomHex(16);
+        const iv = createRandomBytes(12);
+        const paddedBytes = addRandomPadding(fileBytes, paddingBlockSize);
+        const encryptedBytes = await encryptBytes(paddedBytes, decryptKey, iv, createFileAad(id));
+        const extension = getExtension(uploadFile.name);
+        const outputName = `${id}.bin`;
+
+        zipEntries.push({
+            name: `files/${outputName}`,
+            bytes: encryptedBytes
+        });
+
+        manifestFiles.push({
+            id,
+            name: uploadFile.name,
+            size: fileBytes.byteLength,
+            encryptedSize: encryptedBytes.byteLength,
+            extension,
+            type: getFileType(extension),
+            mime: uploadFile.type || getMimeType(extension),
+            path: `files/${outputName}`,
+            modifiedAt: new Date(uploadFile.lastModified || Date.now()).toISOString(),
+            iv: bytesToBase64(iv),
+            sha256: await sha256Hex(fileBytes)
+        });
+    }
+
+    manifestFiles.sort((a, b) => collator.compare(a.name, b.name));
+    const updatedManifest = {
+        version: 1,
+        createdAt: new Date().toISOString(),
+        files: manifestFiles
+    };
+    const manifestIv = createRandomBytes(12);
+    const encryptedManifest = await encryptBytes(
+        appTextEncoder.encode(JSON.stringify(updatedManifest)),
+        decryptKey,
+        manifestIv,
+        MANIFEST_AAD
+    );
+    const updatedEnvelope = {
+        ...manifestEnvelope,
+        manifest: {
+            iv: bytesToBase64(manifestIv),
+            data: bytesToBase64(encryptedManifest)
+        }
+    };
+
+    zipEntries.unshift({
+        name: MANIFEST_URL,
+        bytes: appTextEncoder.encode(`${JSON.stringify(updatedEnvelope, null, 2)}\n`)
+    });
+
+    return zipEntries;
+}
+
+function dedupeFilesByName(files) {
+    const latestByName = new Map();
+    files.forEach((file) => latestByName.set(file.name, file));
+    return Array.from(latestByName.values());
+}
+
+function toManifestEntry(file) {
+    return {
+        id: file.id,
+        name: file.name,
+        size: file.size,
+        encryptedSize: file.encryptedSize,
+        extension: file.extension,
+        type: file.type,
+        mime: file.mime,
+        path: file.path,
+        modifiedAt: file.modifiedAt.toISOString(),
+        iv: file.iv,
+        sha256: file.sha256
+    };
+}
+
+function getPaddingBlockSize() {
+    const blockSize = manifestEnvelope?.crypto?.padding?.blockSize;
+    return Number.isInteger(blockSize) && blockSize > 0 ? blockSize : 0;
+}
+
+function addRandomPadding(bytes, blockSize) {
+    if (!blockSize) {
+        return bytes;
+    }
+
+    const remainder = bytes.byteLength % blockSize;
+    if (remainder === 0) {
+        return bytes;
+    }
+
+    const padded = new Uint8Array(bytes.byteLength + blockSize - remainder);
+    padded.set(bytes);
+    crypto.getRandomValues(padded.subarray(bytes.byteLength));
+    return padded;
+}
+
+function createRandomBytes(length) {
+    const bytes = new Uint8Array(length);
+    crypto.getRandomValues(bytes);
+    return bytes;
+}
+
+function createRandomHex(length) {
+    return bytesToHex(createRandomBytes(length));
+}
+
+function setUploadControls(enabled) {
+    dom.uploadPickButton.disabled = !enabled;
+    dom.dropZone.classList.toggle('busy', !enabled);
+}
+
 
 
 
@@ -1159,6 +1368,8 @@ function lockDrive(options = {}) {
     dom.appView.classList.remove('selection-mode');
     sessionStorage.removeItem(SESSION_KEY);
     dom.searchInput.value = '';
+    dom.uploadStatus.textContent = '드래그하면 암호화 업데이트 ZIP을 만듭니다.';
+    dom.dropZone.classList.remove('dragging', 'busy');
     dom.passwordInput.value = '';
     showView(dom.authView);
     dom.passwordInput.focus();
@@ -1194,10 +1405,12 @@ function setLoading(loading, message) {
     });
     dom.sortSelect.disabled = loading;
     dom.selectionModeButton.disabled = loading || visibleFiles.length === 0;
-    dom.allZipButton.disabled = loading || isZipRunning || allFiles.length === 0;
+    dom.allZipButton.disabled = loading || isZipRunning || isUploadRunning || allFiles.length === 0;
+    dom.uploadPickButton.disabled = loading || isUploadRunning;
+    dom.dropZone.classList.toggle('busy', loading || isUploadRunning);
     dom.selectAllButton.disabled = loading || !isSelectionMode || visibleFiles.length === 0;
     dom.clearSelectionButton.disabled = loading || !isSelectionMode || selectedIds.size === 0;
-    dom.zipButton.disabled = loading || isZipRunning || !isSelectionMode || selectedIds.size === 0;
+    dom.zipButton.disabled = loading || isZipRunning || isUploadRunning || !isSelectionMode || selectedIds.size === 0;
 
     if (loading && dom.appView.hidden) {
         showView(dom.loadingView);

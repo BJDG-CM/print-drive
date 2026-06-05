@@ -21,7 +21,10 @@ export function drawQrCode(canvas, text) {
     const context = canvas.getContext('2d');
     context.fillStyle = '#ffffff';
     context.fillRect(0, 0, pixelSize, pixelSize);
-    context.fillStyle = '#111827';
+    canvas.style.width = `${pixelSize}px`;
+    canvas.style.height = `${pixelSize}px`;
+
+    context.fillStyle = '#000000';
 
     for (let y = 0; y < QR_SIZE; y += 1) {
         for (let x = 0; x < QR_SIZE; x += 1) {
@@ -293,14 +296,14 @@ function drawFormatBits(modules, mask) {
     modules[8][8] = getBit(bits, 7);
     modules[8][7] = getBit(bits, 8);
     for (let i = 9; i < 15; i += 1) {
-        modules[14 - i][8] = getBit(bits, i);
+        modules[8][14 - i] = getBit(bits, i);
     }
 
     for (let i = 0; i < 8; i += 1) {
-        modules[QR_SIZE - 1 - i][8] = getBit(bits, i);
+        modules[8][QR_SIZE - 1 - i] = getBit(bits, i);
     }
     for (let i = 8; i < 15; i += 1) {
-        modules[8][QR_SIZE - 15 + i] = getBit(bits, i);
+        modules[QR_SIZE - 15 + i][8] = getBit(bits, i);
     }
 }
 

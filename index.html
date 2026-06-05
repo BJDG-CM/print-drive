@@ -93,6 +93,14 @@
                         <button class="secondary selection-toggle" type="button" id="btn-selection-mode">선택</button>
                     </div>
                 </div>
+                <section class="drop-zone" id="drop-zone" aria-label="파일 추가">
+                    <input id="upload-input" type="file" multiple hidden>
+                    <div class="drop-copy">
+                        <strong>파일 추가</strong>
+                        <span id="upload-status">드래그하면 암호화 업데이트 ZIP을 만듭니다.</span>
+                    </div>
+                    <button class="secondary" type="button" id="btn-upload-pick">파일 선택</button>
+                </section>
             </section>
 
             <section class="action-bar" aria-label="선택 작업">

@@ -42,6 +42,20 @@ git push
 
 GitHub Actions는 검사와 빌드를 실행한 뒤 `dist/`만 GitHub Pages artifact로 배포합니다.
 
+## 화면에서 파일 추가
+
+잠금 해제 후 앱 화면의 `파일 추가` 영역에 파일을 드래그하거나 `파일 선택`을 누르면, 브라우저가 현재 비밀번호 키로 새 파일을 암호화하고 `Print_Drive_Encrypted_Update.zip`을 내려받습니다.
+
+ZIP 안의 `files/manifest.enc`와 새 `files/*.bin`을 프로젝트의 `files/` 폴더에 덮어쓴 뒤 배포합니다.
+
+```powershell
+git add files/
+git commit -m "Update encrypted print files"
+git push
+```
+
+동일한 파일명은 새 암호화 파일이 목록에서 우선합니다. 오래된 `.bin` 정리까지 한 번에 하려면 `node encrypt_files.mjs`를 다시 실행합니다.
+
 ## 비밀번호 변경
 
 가장 안전한 방법은 숨김 입력입니다.
@@ -146,7 +160,7 @@ node encrypt_files.mjs
 
 새 탭 미리보기는 안전한 표시용 타입만 허용합니다.
 
-- 허용: `pdf`, `png`, `jpg`, `jpeg`, `webp`
+- 허용: `pdf`, `png`, `jpg`, `jpeg`, `webp`, `txt`, `csv`, `md`
 - 다운로드만 허용: `svg`, `html`, `xml`, Office 문서, ZIP과 기타 압축 파일 등
 
 ## 파일명 권장 규칙
