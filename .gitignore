@@ -1,6 +1,7 @@
 __pycache__/
 .tmp/
 dist/
+screenshots/
 *.pyc
 .DS_Store
 .env

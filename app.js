@@ -4,7 +4,8 @@ import {
     getExtension,
     getFileType,
     getMimeType,
-    isPreviewableFile
+    isPreviewableFile,
+    isTextPreviewableFile
 } from './file_types.js';
 import {
     base64ToBytes,
@@ -32,8 +33,15 @@ let isSelectionMode = false;
 let isLoading = false;
 let deferredInstallPrompt = null;
 let idleLockTimer = null;
+let activeFilter = 'all';
+let previewState = {
+    file: null,
+    blob: null,
+    objectUrl: null
+};
 
 const collator = new Intl.Collator('ko-KR', { numeric: true, sensitivity: 'base' });
+const previewTextDecoder = new TextDecoder('utf-8', { fatal: false });
 
 const dom = {
     authView: document.getElementById('auth-view'),
@@ -48,8 +56,10 @@ const dom = {
     installButton: document.getElementById('btn-install'),
     lockButton: document.getElementById('btn-lock'),
     searchInput: document.getElementById('search-input'),
-    typeFilter: document.getElementById('type-filter'),
+    clearSearchButton: document.getElementById('btn-clear-search'),
+    filterChips: document.getElementById('filter-chips'),
     sortSelect: document.getElementById('sort-select'),
+    fileSummary: document.getElementById('file-summary'),
     resultCount: document.getElementById('result-count'),
     selectedCount: document.getElementById('selected-count'),
     selectionModeButton: document.getElementById('btn-selection-mode'),
@@ -59,7 +69,16 @@ const dom = {
     fileList: document.getElementById('file-list'),
     loader: document.getElementById('global-loader'),
     loadingMessage: document.getElementById('loading-message'),
-    toastRoot: document.getElementById('toast-root')
+    toastRoot: document.getElementById('toast-root'),
+    previewModal: document.getElementById('preview-modal'),
+    previewBackdrop: document.getElementById('preview-backdrop'),
+    previewTitle: document.getElementById('preview-title'),
+    previewMeta: document.getElementById('preview-meta'),
+    previewBody: document.getElementById('preview-body'),
+    previewDownloadButton: document.getElementById('btn-preview-download'),
+    previewPrintButton: document.getElementById('btn-preview-print'),
+    previewCloseButton: document.getElementById('btn-preview-close'),
+    previewCloseTopButton: document.getElementById('btn-preview-close-top')
 };
 
 document.addEventListener('DOMContentLoaded', init);
@@ -69,10 +88,15 @@ function init() {
     setButtonContent(dom.refreshButton, 'refresh', '새로고침');
     setButtonContent(dom.installButton, 'plus', '설치');
     setButtonContent(dom.lockButton, 'lock', '잠금');
+    setButtonContent(dom.clearSearchButton, 'x', '지우기');
     setButtonContent(dom.selectionModeButton, 'check', '선택');
     setButtonContent(dom.selectAllButton, 'check', '전체');
     setButtonContent(dom.clearSelectionButton, 'x', '해제');
-    setButtonContent(dom.zipButton, 'download', 'ZIP');
+    setButtonContent(dom.zipButton, 'download', '전체 ZIP 다운로드');
+    setButtonContent(dom.previewDownloadButton, 'download', '다운로드');
+    setButtonContent(dom.previewPrintButton, 'print', '인쇄');
+    setButtonContent(dom.previewCloseButton, 'x', '닫기');
+    setButtonContent(dom.previewCloseTopButton, 'x', '닫기');
     setCompactButtonLabels();
     registerServiceWorker();
 
@@ -98,13 +122,25 @@ function bindEvents() {
     dom.refreshButton.addEventListener('click', () => reloadEncryptedManifest({ manual: true }));
     dom.lockButton.addEventListener('click', () => lockDrive());
     dom.searchInput.addEventListener('input', applyFilters);
-    dom.typeFilter.addEventListener('change', applyFilters);
+    dom.clearSearchButton.addEventListener('click', clearSearch);
+    dom.filterChips.addEventListener('click', handleFilterClick);
     dom.sortSelect.addEventListener('change', applyFilters);
     dom.selectionModeButton.addEventListener('click', toggleSelectionMode);
     dom.selectAllButton.addEventListener('click', toggleSelectAll);
     dom.clearSelectionButton.addEventListener('click', clearSelection);
     dom.zipButton.addEventListener('click', downloadSelectedAsZip);
     dom.installButton.addEventListener('click', promptInstall);
+    dom.previewBackdrop.addEventListener('click', closePreviewModal);
+    dom.previewCloseButton.addEventListener('click', closePreviewModal);
+    dom.previewCloseTopButton.addEventListener('click', closePreviewModal);
+    dom.previewDownloadButton.addEventListener('click', downloadPreviewFile);
+    dom.previewPrintButton.addEventListener('click', printPreviewFile);
+
+    window.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && !dom.previewModal.hidden) {
+            closePreviewModal();
+        }
+    });
 
     window.addEventListener('beforeinstallprompt', (event) => {
         event.preventDefault();
@@ -191,7 +227,7 @@ async function reloadEncryptedManifest(options = {}) {
     try {
         const envelope = await loadManifestEnvelope(true);
         const manifest = await decryptManifest(envelope, decryptKey);
-        allFiles = manifest.files.map(normalizeFile);
+        allFiles = manifest.files.map((file, index) => normalizeFile(file, index, manifest.createdAt));
         selectedIds = new Set([...selectedIds].filter((id) => allFiles.some((file) => file.id === id)));
         applyFilters();
 
@@ -274,9 +310,10 @@ function validateManifestEnvelope(envelope) {
 
 
 
-function normalizeFile(file, index) {
+function normalizeFile(file, index, fallbackModifiedAt) {
     const extension = file.extension || getExtension(file.name);
     const type = file.type || getFileType(extension);
+    const modifiedAt = parseDateValue(file.modifiedAt || fallbackModifiedAt);
 
     return {
         id: file.id,
@@ -289,22 +326,27 @@ function normalizeFile(file, index) {
         path: file.path,
         iv: file.iv,
         sha256: file.sha256,
+        modifiedAt,
         apiIndex: index
     };
 }
 
 function applyFilters() {
     const query = dom.searchInput.value.trim().toLocaleLowerCase('ko-KR');
-    const filterType = dom.typeFilter.value;
     const sortBy = dom.sortSelect.value;
+    dom.clearSearchButton.hidden = query.length === 0;
 
     visibleFiles = allFiles.filter((file) => {
         const matchesQuery = !query || file.name.toLocaleLowerCase('ko-KR').includes(query);
-        const matchesType = filterType === 'all' || file.type === filterType || (filterType === 'other' && file.type === 'archive');
+        const matchesType = activeFilter === 'all' || file.type === activeFilter || (activeFilter === 'other' && file.type === 'archive');
         return matchesQuery && matchesType;
     });
 
     visibleFiles.sort((a, b) => {
+        if (sortBy === 'recent') {
+            return b.modifiedAt.getTime() - a.modifiedAt.getTime() || collator.compare(a.name, b.name);
+        }
+
         if (sortBy === 'size') {
             return b.size - a.size || collator.compare(a.name, b.name);
         }
@@ -324,17 +366,62 @@ function applyFilters() {
     updateSelection();
 }
 
+function parseDateValue(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? new Date(0) : date;
+}
+
+function handleFilterClick(event) {
+    const button = event.target.closest('[data-filter]');
+    if (!button) {
+        return;
+    }
+
+    activeFilter = button.dataset.filter;
+    updateFilterChips();
+    applyFilters();
+}
+
+function updateFilterChips() {
+    dom.filterChips.querySelectorAll('[data-filter]').forEach((button) => {
+        const active = button.dataset.filter === activeFilter;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-pressed', String(active));
+    });
+}
+
+function clearSearch() {
+    dom.searchInput.value = '';
+    applyFilters();
+    dom.searchInput.focus();
+}
+
+function resetFilters() {
+    activeFilter = 'all';
+    dom.searchInput.value = '';
+    dom.sortSelect.value = 'recent';
+    updateFilterChips();
+    applyFilters();
+}
+
 function renderFiles() {
     dom.fileList.replaceChildren();
 
     if (allFiles.length === 0) {
-        dom.fileList.appendChild(createStateItem('📂', '현재 업로드된 파일이 없습니다.', 'private_files/에 파일을 넣고 암호화 스크립트를 실행해 주세요.'));
+        dom.fileList.appendChild(createStateItem('FILE', '현재 파일이 없습니다.', '아직 다운로드할 수 있는 파일이 없습니다.'));
         updateResultCount();
         return;
     }
 
     if (visibleFiles.length === 0) {
-        dom.fileList.appendChild(createStateItem('🔎', '검색 결과가 없습니다.', '검색어나 파일 타입 필터를 조정해 주세요.'));
+        const item = createStateItem('검색', '검색 결과가 없습니다.', '검색어 또는 파일 타입 필터를 조정해 주세요.');
+        const resetButton = document.createElement('button');
+        resetButton.type = 'button';
+        resetButton.className = 'secondary';
+        setButtonContent(resetButton, 'refresh', '필터 초기화');
+        resetButton.addEventListener('click', resetFilters);
+        item.appendChild(resetButton);
+        dom.fileList.appendChild(item);
         updateResultCount();
         return;
     }
@@ -361,43 +448,42 @@ function createFileItem(file) {
         setFileSelection(file.id, checkbox.checked);
     });
 
+    const badge = document.createElement('span');
+    badge.className = 'file-type-badge';
+    badge.textContent = FILE_TYPE_ICONS[file.type] || FILE_TYPE_ICONS.other;
+    badge.setAttribute('aria-label', FILE_TYPE_LABELS[file.type] || FILE_TYPE_LABELS.other);
+
     const info = document.createElement('div');
     info.className = 'file-info';
 
-    const nameLine = document.createElement('div');
-    nameLine.className = 'file-name-line';
+    const name = document.createElement('div');
+    name.className = 'file-name';
+    name.textContent = file.name;
+    name.title = file.name;
 
-    const icon = document.createElement('span');
-    icon.className = 'file-type-icon';
-    icon.textContent = FILE_TYPE_ICONS[file.type] || FILE_TYPE_ICONS.other;
-    icon.setAttribute('aria-hidden', 'true');
-
-    const link = document.createElement(isPreviewableFile(file) ? 'a' : 'span');
-    link.className = 'file-name-link';
-    link.textContent = file.name;
-    link.title = file.name;
-    if (isPreviewableFile(file)) {
-        link.href = createFileAppLink(file);
-        link.addEventListener('click', async (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            await openFile(file.id);
-        });
-    }
-
-    nameLine.append(icon, link);
-
-    const meta = document.createElement('span');
+    const meta = document.createElement('div');
     meta.className = 'file-meta';
-    meta.textContent = `${FILE_TYPE_LABELS[file.type] || FILE_TYPE_LABELS.other} · ${formatSize(file.size)}`;
+    meta.textContent = `${FILE_TYPE_LABELS[file.type] || FILE_TYPE_LABELS.other} · ${formatSize(file.size)} · 업데이트 ${formatDateTime(file.modifiedAt)}`;
 
-    info.append(nameLine, meta);
+    info.append(name, meta);
 
     const actions = document.createElement('div');
     actions.className = 'file-actions';
 
+    const previewButton = document.createElement('button');
+    previewButton.type = 'button';
+    previewButton.className = 'secondary preview-action';
+    previewButton.title = isPreviewableFile(file) ? '미리보기' : '이 형식은 미리보기를 지원하지 않습니다.';
+    previewButton.disabled = !isPreviewableFile(file);
+    setButtonContent(previewButton, 'open', isPreviewableFile(file) ? '미리보기' : '미리보기 불가');
+    previewButton.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        await openFile(file.id);
+    });
+
     const downloadButton = document.createElement('button');
     downloadButton.type = 'button';
+    downloadButton.className = 'download-action';
     downloadButton.title = '다운로드';
     setButtonContent(downloadButton, 'download', '다운로드');
     downloadButton.addEventListener('click', async (event) => {
@@ -405,20 +491,7 @@ function createFileItem(file) {
         await downloadSingleFile(file.id);
     });
 
-    actions.append(downloadButton);
-
-    if (isPreviewableFile(file)) {
-        const openButton = document.createElement('button');
-        openButton.type = 'button';
-        openButton.className = 'secondary';
-        openButton.title = '열기';
-        setButtonContent(openButton, 'open', '열기');
-        openButton.addEventListener('click', async (event) => {
-            event.stopPropagation();
-            await openFile(file.id);
-        });
-        actions.append(openButton);
-    }
+    actions.append(previewButton, downloadButton);
 
     item.addEventListener('click', () => {
         if (isSelectionMode) {
@@ -426,7 +499,7 @@ function createFileItem(file) {
         }
     });
 
-    item.append(checkbox, info, actions);
+    item.append(checkbox, badge, info, actions);
     return item;
 }
 
@@ -509,6 +582,9 @@ function setSelectionMode(enabled) {
 
 function updateSelection() {
     const selectedCount = selectedIds.size;
+    const selectedSize = allFiles
+        .filter((file) => selectedIds.has(file.id))
+        .reduce((total, file) => total + file.size, 0);
     const allVisibleSelected = visibleFiles.length > 0 && visibleFiles.every((file) => selectedIds.has(file.id));
 
     dom.fileList.querySelectorAll('.file-item').forEach((item) => {
@@ -521,7 +597,7 @@ function updateSelection() {
         }
     });
 
-    dom.selectedCount.textContent = `선택 ${selectedCount}개`;
+    dom.selectedCount.textContent = `선택 ${selectedCount}개 · ${formatSize(selectedSize)}`;
     dom.selectedCount.hidden = !isSelectionMode;
     dom.selectionModeButton.disabled = isLoading || visibleFiles.length === 0;
     dom.selectionModeButton.classList.toggle('active', isSelectionMode);
@@ -529,7 +605,7 @@ function updateSelection() {
     dom.selectAllButton.disabled = isLoading || !isSelectionMode || visibleFiles.length === 0;
     dom.clearSelectionButton.disabled = isLoading || !isSelectionMode || selectedCount === 0;
     dom.zipButton.disabled = isLoading || !isSelectionMode || selectedCount === 0;
-    setButtonContent(dom.zipButton, 'download', selectedCount > 0 ? `${selectedCount}개 ZIP` : 'ZIP');
+    setButtonContent(dom.zipButton, 'download', selectedCount > 0 ? `${selectedCount}개 ZIP 다운로드` : '전체 ZIP 다운로드');
     setButtonContent(dom.selectAllButton, allVisibleSelected ? 'x' : 'check', allVisibleSelected ? '전체 해제' : '전체');
 }
 
@@ -583,37 +659,131 @@ async function openFile(fileId) {
     }
 
     if (!isPreviewableFile(file)) {
-        await downloadSingleFile(file.id);
-        showToast('이 파일 형식은 새 탭 미리보기를 제한하고 다운로드만 허용합니다.', 'info');
+        showToast('이 파일 형식은 미리보기를 지원하지 않습니다.', 'info');
         return;
     }
 
-    const previewWindow = window.open('', '_blank', 'noopener');
     showOverlay(`${file.name} 복호화 중입니다...`);
 
     try {
         const decrypted = await fetchAndDecryptFile(file, decryptKey);
         const blob = new Blob([decrypted.bytes], { type: file.mime });
-        const url = URL.createObjectURL(blob);
-
-        if (previewWindow) {
-            previewWindow.location.href = url;
-            window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-        } else {
-            downloadBlob(blob, file.name);
-            window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
-        }
-
-        showToast('복호화된 파일을 열었습니다.', 'success');
+        await showPreviewModal(file, blob, decrypted.bytes);
     } catch (error) {
         console.error(error);
-        if (previewWindow) {
-            previewWindow.close();
-        }
-        showToast('파일을 열지 못했습니다.', 'error');
+        showPreviewFailure(file);
     } finally {
         hideOverlay();
     }
+}
+
+async function showPreviewModal(file, blob, bytes) {
+    closePreviewModal({ silent: true });
+
+    const objectUrl = URL.createObjectURL(blob);
+    previewState = { file, blob, objectUrl };
+
+    dom.previewTitle.textContent = file.name;
+    dom.previewMeta.textContent = `${FILE_TYPE_LABELS[file.type] || FILE_TYPE_LABELS.other} · ${formatSize(file.size)} · 업데이트 ${formatDateTime(file.modifiedAt)}`;
+    dom.previewBody.replaceChildren();
+    dom.previewPrintButton.disabled = false;
+
+    if (file.extension === 'pdf') {
+        const frame = document.createElement('iframe');
+        frame.className = 'preview-frame';
+        frame.title = `${file.name} 미리보기`;
+        frame.src = objectUrl;
+        dom.previewBody.appendChild(frame);
+    } else if (file.type === 'image') {
+        const image = document.createElement('img');
+        image.className = 'preview-image';
+        image.alt = file.name;
+        image.src = objectUrl;
+        dom.previewBody.appendChild(image);
+    } else if (isTextPreviewableFile(file)) {
+        const pre = document.createElement('pre');
+        pre.className = 'preview-text';
+        pre.textContent = previewTextDecoder.decode(bytes);
+        dom.previewBody.appendChild(pre);
+    } else {
+        showPreviewFailure(file, { keepState: true });
+        return;
+    }
+
+    dom.previewModal.hidden = false;
+    dom.previewCloseButton.focus();
+}
+
+function showPreviewFailure(file, options = {}) {
+    if (!options.keepState) {
+        closePreviewModal({ silent: true });
+        previewState = { file, blob: null, objectUrl: null };
+    }
+
+    dom.previewTitle.textContent = file.name;
+    dom.previewMeta.textContent = `${FILE_TYPE_LABELS[file.type] || FILE_TYPE_LABELS.other} · ${formatSize(file.size)}`;
+    dom.previewBody.replaceChildren();
+    const fallback = document.createElement('div');
+    fallback.className = 'preview-fallback';
+    const title = document.createElement('h3');
+    title.textContent = '미리보기를 표시할 수 없습니다.';
+    const message = document.createElement('p');
+    message.textContent = '브라우저에서 이 파일을 안전하게 표시하지 못했습니다. 다운로드해서 확인해 주세요.';
+    fallback.append(title, message);
+    dom.previewBody.appendChild(fallback);
+    dom.previewPrintButton.disabled = true;
+    dom.previewModal.hidden = false;
+    dom.previewDownloadButton.focus();
+}
+
+function closePreviewModal(options = {}) {
+    if (previewState.objectUrl) {
+        URL.revokeObjectURL(previewState.objectUrl);
+    }
+
+    previewState = { file: null, blob: null, objectUrl: null };
+    dom.previewBody.replaceChildren();
+    dom.previewModal.hidden = true;
+
+    if (!options.silent) {
+        dom.fileList.focus();
+    }
+}
+
+async function downloadPreviewFile() {
+    if (!previewState.file) {
+        return;
+    }
+
+    if (previewState.blob) {
+        downloadBlob(previewState.blob, previewState.file.name);
+        return;
+    }
+
+    await downloadSingleFile(previewState.file.id);
+}
+
+function printPreviewFile() {
+    if (!previewState.objectUrl) {
+        showToast('인쇄할 미리보기 파일이 없습니다.', 'warning');
+        return;
+    }
+
+    const frame = document.createElement('iframe');
+    frame.className = 'print-frame';
+    frame.src = previewState.objectUrl;
+    document.body.appendChild(frame);
+    frame.addEventListener('load', () => {
+        try {
+            frame.contentWindow?.focus();
+            frame.contentWindow?.print();
+        } catch (error) {
+            console.error(error);
+            showToast('브라우저에서 인쇄 창을 열지 못했습니다.', 'error');
+        } finally {
+            window.setTimeout(() => frame.remove(), 1_000);
+        }
+    }, { once: true });
 }
 
 async function downloadSelectedAsZip() {
@@ -692,6 +862,9 @@ function lockDrive(options = {}) {
     visibleFiles = [];
     selectedIds.clear();
     isSelectionMode = false;
+    activeFilter = 'all';
+    updateFilterChips();
+    closePreviewModal({ silent: true });
     dom.appView.classList.remove('selection-mode');
     sessionStorage.removeItem(SESSION_KEY);
     dom.searchInput.value = '';
@@ -724,7 +897,10 @@ function setLoading(loading, message) {
     dom.refreshButton.disabled = loading;
     dom.lockButton.disabled = loading;
     dom.searchInput.disabled = loading;
-    dom.typeFilter.disabled = loading;
+    dom.clearSearchButton.disabled = loading;
+    dom.filterChips.querySelectorAll('button').forEach((button) => {
+        button.disabled = loading;
+    });
     dom.sortSelect.disabled = loading;
     dom.selectionModeButton.disabled = loading || visibleFiles.length === 0;
     dom.selectAllButton.disabled = loading || !isSelectionMode || visibleFiles.length === 0;
@@ -768,6 +944,25 @@ function hideAuthError() {
 
 function updateResultCount() {
     dom.resultCount.textContent = `${visibleFiles.length} / ${allFiles.length}개 표시`;
+    const totalSize = allFiles.reduce((total, file) => total + file.size, 0);
+    const latest = allFiles.reduce((latestDate, file) => (
+        file.modifiedAt > latestDate ? file.modifiedAt : latestDate
+    ), new Date(0));
+    const latestText = latest.getTime() > 0 ? formatDateTime(latest) : '최근 업데이트 없음';
+    dom.fileSummary.textContent = `${allFiles.length}개 파일 · ${formatSize(totalSize)} · ${latestText}`;
+}
+
+function formatDateTime(date) {
+    if (!(date instanceof Date) || Number.isNaN(date.getTime()) || date.getTime() === 0) {
+        return '알 수 없음';
+    }
+
+    return new Intl.DateTimeFormat('ko-KR', {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    }).format(date);
 }
 
 function showToast(message, type = 'info') {

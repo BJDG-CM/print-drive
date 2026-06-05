@@ -35,7 +35,8 @@ export const FILE_TYPES = {
     archive: new Set(['zip', '7z', 'rar', 'tar', 'gz'])
 };
 
-export const PREVIEWABLE_EXTENSIONS = new Set(['pdf', 'png', 'jpg', 'jpeg', 'webp']);
+export const PREVIEWABLE_EXTENSIONS = new Set(['pdf', 'png', 'jpg', 'jpeg', 'webp', 'txt', 'csv', 'md']);
+export const TEXT_PREVIEW_EXTENSIONS = new Set(['txt', 'csv', 'md']);
 
 export const FILE_TYPE_LABELS = {
     pdf: 'PDF',
@@ -84,4 +85,8 @@ export function getMimeType(extension) {
 
 export function isPreviewableFile(file) {
     return PREVIEWABLE_EXTENSIONS.has((file.extension || '').toLowerCase());
+}
+
+export function isTextPreviewableFile(file) {
+    return TEXT_PREVIEW_EXTENSIONS.has((file.extension || '').toLowerCase());
 }

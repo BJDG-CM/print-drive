@@ -12,6 +12,7 @@ import {
     readdir,
     readFile,
     rm,
+    stat,
     writeFile
 } from 'node:fs/promises';
 import path from 'node:path';
@@ -83,6 +84,7 @@ export async function main(args = process.argv.slice(2)) {
             type: getFileType(extension),
             mime: getMimeType(extension),
             path: `files/${outputName}`,
+            modifiedAt: sourceFile.modifiedAt,
             iv: iv.toString('base64'),
             sha256: createHash('sha256').update(fileBuffer).digest('hex')
         });
@@ -301,9 +303,11 @@ async function listSourceFiles(sourceDir) {
             continue;
         }
 
+        const fileStat = await stat(path.join(sourceDir, entry.name));
         files.push({
             name: entry.name,
-            absolutePath: path.join(sourceDir, entry.name)
+            absolutePath: path.join(sourceDir, entry.name),
+            modifiedAt: fileStat.mtime.toISOString()
         });
     }
 

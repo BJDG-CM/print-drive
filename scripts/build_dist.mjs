@@ -2,7 +2,7 @@
 import { mkdir, readFile, readdir, rm, writeFile, copyFile } from 'node:fs/promises';
 import path from 'node:path';
 import { PROJECT_ROOT, displayPath } from '../paths.mjs';
-import { assertPublicFilesClean } from '../public_files_guard.mjs';
+import { assertPublicFilesClean, isAllowedPublicFileName } from '../public_files_guard.mjs';
 import { assertDistClean } from './check_dist.mjs';
 
 const DIST_DIR = path.join(PROJECT_ROOT, 'dist');
@@ -44,7 +44,7 @@ async function syncFilesDirectory(sourceDir, targetDir) {
     const targetEntries = await readdir(targetDir, { withFileTypes: true });
 
     for (const entry of targetEntries) {
-        if (!sourceNames.has(entry.name)) {
+        if (!sourceNames.has(entry.name) && !isAllowedPublicFileName(entry.name)) {
             await rm(path.join(targetDir, entry.name), { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
         }
     }
