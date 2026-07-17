@@ -20,6 +20,7 @@ const JS_FILES = [
     'scripts/build_dist.mjs',
     'scripts/check_dist.mjs',
     'scripts/check_syntax.mjs',
+    'scripts/create_design_fixture.mjs',
     'scripts/py_compile_check.mjs',
     'scripts/smoke_test.mjs'
 ];

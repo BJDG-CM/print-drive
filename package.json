@@ -6,6 +6,7 @@
   "scripts": {
     "check": "node scripts/check_syntax.mjs && node scripts/py_compile_check.mjs && node check_public_files.mjs",
     "test": "node scripts/smoke_test.mjs",
-    "build": "node scripts/build_dist.mjs"
+    "build": "node scripts/build_dist.mjs",
+    "design:fixture": "node scripts/create_design_fixture.mjs"
   }
 }
