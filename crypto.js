@@ -23,6 +23,9 @@ export class PrintDriveCryptoError extends Error {
         super(message, options);
         this.name = 'PrintDriveCryptoError';
         this.code = code;
+        if (Number.isSafeInteger(options.status)) {
+            this.status = options.status;
+        }
     }
 }
 
@@ -185,33 +188,44 @@ export async function fetchAndDecryptFile(file, vaultContext, options = {}) {
         if (vaultContext?.version === 2) {
             const ciphertextHash = await sha256Hex(encrypted);
             if (!timingSafeTextEqual(ciphertextHash, entry.ciphertextSha256)) {
-                throw new PrintDriveCryptoError('INTEGRITY_FAILED', '암호문 SHA-256 검증에 실패했습니다.');
+                throw new PrintDriveCryptoError('CIPHERTEXT_HASH_MISMATCH', '암호문 SHA-256 검증에 실패했습니다.');
             }
             const dataKeyBytes = await unwrapFileDataKey(entry, vaultContext);
-            const dataKey = await importAesKey(dataKeyBytes, ['decrypt']);
-            paddedPlaintext = await crypto.subtle.decrypt(
-                aesGcmParams(entry.dataIv, createFileV2Aad(vaultContext.vaultId, entry), true),
-                dataKey,
-                encrypted
-            );
-            dataKeyBytes.fill(0);
+            try {
+                const dataKey = await importAesKey(dataKeyBytes, ['decrypt']);
+                try {
+                    paddedPlaintext = await crypto.subtle.decrypt(
+                        aesGcmParams(entry.dataIv, createFileV2Aad(vaultContext.vaultId, entry), true),
+                        dataKey,
+                        encrypted
+                    );
+                } catch (error) {
+                    throw new PrintDriveCryptoError('FILE_AUTHENTICATION_FAILED', `${file.name} AES-GCM 인증에 실패했습니다.`, { cause: error });
+                }
+            } finally {
+                dataKeyBytes.fill(0);
+            }
         } else {
             const key = vaultContext?.version === 1 ? vaultContext.key : vaultContext;
-            paddedPlaintext = await crypto.subtle.decrypt(
-                aesGcmParams(entry.iv, createFileAad(entry.id)),
-                key,
-                encrypted
-            );
+            try {
+                paddedPlaintext = await crypto.subtle.decrypt(
+                    aesGcmParams(entry.iv, createFileAad(entry.id)),
+                    key,
+                    encrypted
+                );
+            } catch (error) {
+                throw new PrintDriveCryptoError('FILE_AUTHENTICATION_FAILED', `${file.name} AES-GCM 인증에 실패했습니다.`, { cause: error });
+            }
         }
 
         const bytes = new Uint8Array(paddedPlaintext).slice(0, entry.size);
-        await verifySha256(bytes, entry.sha256);
+        await verifySha256(bytes, entry.sha256, 'PLAINTEXT_HASH_MISMATCH');
         return { file, bytes };
     } catch (error) {
         if (error instanceof PrintDriveCryptoError) {
             throw error;
         }
-        throw new PrintDriveCryptoError('AUTHENTICATION_FAILED', `${file.name} 인증 또는 복호화에 실패했습니다.`, { cause: error });
+        throw new PrintDriveCryptoError('FILE_AUTHENTICATION_FAILED', `${file.name} 인증 또는 복호화에 실패했습니다.`, { cause: error });
     }
 }
 
@@ -222,7 +236,7 @@ export async function decryptSharedFile(payload, dataKeyBytes, options = {}) {
         ? await sha256Hex(encrypted)
         : null;
     if (ciphertextHash && !timingSafeTextEqual(ciphertextHash, payload.ciphertextSha256)) {
-        throw new PrintDriveCryptoError('INTEGRITY_FAILED', '공유 파일 암호문 검증에 실패했습니다.');
+        throw new PrintDriveCryptoError('CIPHERTEXT_HASH_MISMATCH', '공유 파일 암호문 검증에 실패했습니다.');
     }
 
     try {
@@ -233,13 +247,13 @@ export async function decryptSharedFile(payload, dataKeyBytes, options = {}) {
             encrypted
         );
         const bytes = new Uint8Array(plaintext).slice(0, payload.size);
-        await verifySha256(bytes, payload.sha256);
+        await verifySha256(bytes, payload.sha256, 'PLAINTEXT_HASH_MISMATCH');
         return { file: payload, bytes };
     } catch (error) {
         if (error instanceof PrintDriveCryptoError) {
             throw error;
         }
-        throw new PrintDriveCryptoError('AUTHENTICATION_FAILED', '공유 파일 인증 또는 복호화에 실패했습니다.', { cause: error });
+        throw new PrintDriveCryptoError('FILE_AUTHENTICATION_FAILED', '공유 파일 인증 또는 복호화에 실패했습니다.', { cause: error });
     }
 }
 
@@ -284,7 +298,7 @@ export async function unwrapFileDataKey(file, vaultContext) {
         if (error instanceof PrintDriveCryptoError) {
             throw error;
         }
-        throw new PrintDriveCryptoError('AUTHENTICATION_FAILED', '파일 DEK 인증에 실패했습니다.', { cause: error });
+        throw new PrintDriveCryptoError('DEK_AUTHENTICATION_FAILED', '파일 DEK 인증에 실패했습니다.', { cause: error });
     }
 }
 
@@ -752,15 +766,18 @@ async function fetchEncryptedFile(file, signal) {
         throw new PrintDriveCryptoError('NETWORK_FAILED', `${file.name} 암호문 네트워크 요청에 실패했습니다.`, { cause: error });
     }
     if (!response.ok) {
-        throw new PrintDriveCryptoError('NETWORK_FAILED', `${file.name} 암호문 다운로드 실패 (${response.status})`);
+        const code = response.status === 404 ? 'OBJECT_NOT_FOUND' : 'NETWORK_FAILED';
+        throw new PrintDriveCryptoError(code, `${file.name} 암호문 다운로드 실패 (${response.status})`, {
+            status: response.status
+        });
     }
     const encrypted = await readResponseBytesBounded(response, file.encryptedSize, {
         signal,
-        errorCode: 'INTEGRITY_FAILED',
+        errorCode: 'CIPHERTEXT_SIZE_MISMATCH',
         errorMessage: `${file.name} 암호문 크기가 manifest와 다릅니다.`
     });
     if (encrypted.byteLength !== file.encryptedSize) {
-        throw new PrintDriveCryptoError('INTEGRITY_FAILED', `${file.name} 암호문 크기 검증에 실패했습니다.`);
+        throw new PrintDriveCryptoError('CIPHERTEXT_SIZE_MISMATCH', `${file.name} 암호문 크기 검증에 실패했습니다.`);
     }
     return encrypted;
 }
@@ -823,10 +840,10 @@ export async function readResponseBytesBounded(response, maxBytes, options = {})
     return bytes;
 }
 
-async function verifySha256(bytes, expectedHash) {
+async function verifySha256(bytes, expectedHash, errorCode = 'INTEGRITY_FAILED') {
     const actualHash = await sha256Hex(bytes);
     if (!timingSafeTextEqual(actualHash, expectedHash)) {
-        throw new PrintDriveCryptoError('INTEGRITY_FAILED', '복호화된 파일 SHA-256 검증에 실패했습니다.');
+        throw new PrintDriveCryptoError(errorCode, '복호화된 파일 SHA-256 검증에 실패했습니다.');
     }
 }
 

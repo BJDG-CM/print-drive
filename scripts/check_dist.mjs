@@ -1,17 +1,17 @@
 #!/usr/bin/env node
-import { readdir } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { PROJECT_ROOT, displayPath } from '../paths.mjs';
 import { inspectPublicFiles } from '../public_files_guard.mjs';
-import { collectBrowserAssets } from './dist_contract.mjs';
+import { collectBrowserAssets, GENERATED_BROWSER_ASSETS } from './dist_contract.mjs';
 
 const DIST_DIR = path.join(PROJECT_ROOT, 'dist');
 
 export async function assertDistClean(distDir = DIST_DIR, options = {}) {
     const projectRoot = path.resolve(options.projectRoot || PROJECT_ROOT);
     const browserAssets = options.expectedBrowserAssets || await collectBrowserAssets(projectRoot);
-    const expectedFiles = new Set(browserAssets);
+    const expectedFiles = new Set([...browserAssets, ...GENERATED_BROWSER_ASSETS]);
     const expectedDirectories = new Set(['files']);
     for (const expectedFile of expectedFiles) {
         let directory = path.posix.dirname(expectedFile);
@@ -47,12 +47,27 @@ export async function assertDistClean(distDir = DIST_DIR, options = {}) {
         throw new Error(`dist structure check failed:\n${violations.map((value) => `- ${value}`).join('\n')}`);
     }
 
+    await assertBuildIdentity(distDir);
     return inspectPublicFiles(path.join(distDir, 'files'), {
         displayDir: displayFor(projectRoot, path.join(distDir, 'files')),
         allowLegacyV1: options.allowLegacyV1 !== false,
         verifyCiphertext: true,
         rejectUnreferenced: true
     });
+}
+
+async function assertBuildIdentity(distDir) {
+    const metadata = JSON.parse(await readFile(path.join(distDir, 'build-meta.json'), 'utf8'));
+    if (metadata.version !== 1 || !/^[0-9a-f]{64}$/.test(metadata.buildId || '')) {
+        throw new Error('dist build-meta.json is invalid.');
+    }
+    const [indexSource, serviceWorkerSource] = await Promise.all([
+        readFile(path.join(distDir, 'index.html'), 'utf8'),
+        readFile(path.join(distDir, 'sw.js'), 'utf8')
+    ]);
+    if (!indexSource.includes(`content="${metadata.buildId}"`) || !serviceWorkerSource.includes(`const BUILD_ID = '${metadata.buildId}'`)) {
+        throw new Error('dist shell and Service Worker build IDs do not match build-meta.json.');
+    }
 }
 
 async function walkDist(root) {

@@ -5,6 +5,8 @@ const REQUIRED_STATIC_ASSETS = ['index.html', 'manifest.json', 'icon.svg', 'robo
 const OPTIONAL_SECURITY_MODULES = ['bootstrap.js', 'capability.js', 'public_device.js'];
 const RESERVED_FIRST_SEGMENTS = new Set(['files', 'private_files', 'dist', '.git', '.tmp', 'scripts', 'tests', 'node_modules']);
 
+export const GENERATED_BROWSER_ASSETS = Object.freeze(['build-meta.json']);
+
 export async function collectBrowserAssets(projectRoot) {
     const root = path.resolve(projectRoot);
     const indexSource = await readBrowserText(root, 'index.html');

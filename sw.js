@@ -1,12 +1,15 @@
 const CACHE_PREFIX = 'print-drive-shell-';
-const CACHE_NAME = `${CACHE_PREFIX}v4`;
+const BUILD_ID = '__PRINT_DRIVE_BUILD_ID__';
+const CACHE_NAME = `${CACHE_PREFIX}${BUILD_ID}`;
 const SHELL_ASSETS = [
     './',
     './index.html',
     './styles.css',
     './bootstrap.js',
+    './build_identity.js',
     './app.js',
     './crypto.js',
+    './file_errors.js',
     './capability.js',
     './public_device.js',
     './file_types.js',
@@ -47,9 +50,10 @@ self.addEventListener('fetch', (event) => {
         return;
     }
     const isUploadedFile = url.pathname.includes('/files/');
+    const isBuildMetadata = url.pathname.endsWith('/build-meta.json');
 
-    if (isUploadedFile) {
-        event.respondWith(fetch(event.request));
+    if (isUploadedFile || isBuildMetadata) {
+        event.respondWith(fetch(event.request, { cache: 'no-store' }));
         return;
     }
 

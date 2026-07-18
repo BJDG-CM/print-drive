@@ -17,8 +17,24 @@
         ? new Promise((resolve) => document.addEventListener('DOMContentLoaded', resolve, { once: true }))
         : Promise.resolve();
 
-    Promise.all([import('./app.js'), domReady])
-        .then(([{ startPrintDrive }]) => {
+    Promise.all([import('./build_identity.js'), domReady])
+        .then(async ([{ ensureCurrentBuild }]) => {
+            const identity = await ensureCurrentBuild();
+            if (identity.status === 'reloading') {
+                return null;
+            }
+            if (identity.status === 'stale-after-reload') {
+                const error = new Error('최신 앱 셸을 불러오지 못했습니다. 브라우저 탭을 닫고 다시 열어 주세요.');
+                error.code = 'STALE_BUILD_UNRECOVERED';
+                throw error;
+            }
+            return import('./app.js');
+        })
+        .then((appModule) => {
+            if (!appModule) {
+                return;
+            }
+            const { startPrintDrive } = appModule;
             captureShareFragment();
             startPrintDrive(pendingShareFragment);
             pendingShareFragment = '';

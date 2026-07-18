@@ -1,11 +1,14 @@
 #!/usr/bin/env node
-import { copyFile, lstat, mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { PROJECT_ROOT, displayPath, getRuntimeConfig } from '../paths.mjs';
 import { inspectPublicFiles } from '../public_files_guard.mjs';
 import { assertDistClean } from './check_dist.mjs';
 import { collectBrowserAssets } from './dist_contract.mjs';
+
+const BUILD_ID_PLACEHOLDER = '__PRINT_DRIVE_BUILD_ID__';
 
 export async function buildDist(options = {}) {
     const projectRoot = path.resolve(options.projectRoot || PROJECT_ROOT);
@@ -21,6 +24,7 @@ export async function buildDist(options = {}) {
         rejectUnreferenced: true
     });
     const browserAssets = await collectBrowserAssets(projectRoot);
+    const buildIdentity = await createBuildIdentity(projectRoot, browserAssets, sourceFilesDir, inspection);
     const tempBase = path.join(projectRoot, '.tmp');
     await mkdir(tempBase, { recursive: true });
     const workDir = await mkdtemp(path.join(tempBase, 'dist-build-'));
@@ -34,6 +38,20 @@ export async function buildDist(options = {}) {
             await mkdir(path.dirname(target), { recursive: true });
             await copyFile(path.join(projectRoot, ...relative.split('/')), target);
         }
+
+        for (const relative of ['index.html', 'sw.js']) {
+            const target = path.join(stageDir, relative);
+            const source = await readFile(target, 'utf8');
+            if (!source.includes(BUILD_ID_PLACEHOLDER)) {
+                throw new Error(`${relative} is missing the build identity placeholder.`);
+            }
+            await writeFile(target, source.replaceAll(BUILD_ID_PLACEHOLDER, buildIdentity.buildId), 'utf8');
+        }
+        await writeFile(
+            path.join(stageDir, 'build-meta.json'),
+            `${JSON.stringify(buildIdentity, null, 2)}\n`,
+            'utf8'
+        );
 
         await copyFile(path.join(sourceFilesDir, 'manifest.enc'), path.join(stageDir, 'files', 'manifest.enc'));
         for (const name of inspection.referencedNames) {
@@ -54,7 +72,31 @@ export async function buildDist(options = {}) {
         console.warn('Built legacy v1 artifact. Target stale files were removed, but v1 cannot prove manifest-to-blob references.');
     }
     console.log(`Built verified GitHub Pages artifact in ${displayFor(projectRoot, distDir)}.`);
-    return { distDir, inspection, browserAssets };
+    return { distDir, inspection, browserAssets, buildIdentity };
+}
+
+async function createBuildIdentity(projectRoot, browserAssets, sourceFilesDir, inspection) {
+    const hash = createHash('sha256');
+    for (const relative of [...browserAssets].sort()) {
+        hash.update(relative);
+        hash.update('\0');
+        hash.update(await readFile(path.join(projectRoot, ...relative.split('/'))));
+        hash.update('\0');
+    }
+    const manifestBytes = await readFile(path.join(sourceFilesDir, 'manifest.enc'));
+    hash.update('files/manifest.enc\0');
+    hash.update(manifestBytes);
+    return {
+        version: 1,
+        buildId: hash.digest('hex'),
+        vault: {
+            version: inspection.envelope.version,
+            schema: inspection.envelope.manifest?.schema || 1,
+            revision: inspection.envelope.manifest?.revision || 1,
+            manifestSha256: createHash('sha256').update(manifestBytes).digest('hex'),
+            objects: inspection.objects.length
+        }
+    };
 }
 
 async function replaceDistAtomically(distDir, stageDir, backupDir) {

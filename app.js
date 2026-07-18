@@ -32,6 +32,7 @@ import {
 import { clearAppManagedBrowserData } from './public_device.js';
 import { createZipBlob } from './zip.js';
 import { formatSize, setButtonContent } from './ui.js';
+import { describeFileError, safeFileDiagnostic } from './file_errors.js';
 import { drawQrCode } from './qr.js';
 
 const MANIFEST_URL = 'files/manifest.enc';
@@ -1686,8 +1687,9 @@ async function downloadSingleFile(fileId) {
         if (isTrustedOperationCancelled(error, operation)) {
             return;
         }
-        console.error(error);
-        showToast('파일 복호화에 실패했습니다.', 'error');
+        const presentation = describeFileError(error);
+        console.error('Print Drive file operation failed.', safeFileDiagnostic(error, file));
+        showToast(presentation.message, presentation.code === 'CANCELLED' ? 'info' : 'error');
     } finally {
         decrypted?.bytes?.fill?.(0);
         finishTrustedOperation(operation);
@@ -1726,7 +1728,7 @@ async function openFile(fileId) {
         if (isTrustedOperationCancelled(error, operation)) {
             return;
         }
-        console.error(error);
+        console.error('Print Drive file operation failed.', safeFileDiagnostic(error, file));
         showPreviewFailure(file, { cause: error });
     } finally {
         decrypted?.bytes?.fill?.(0);
@@ -1789,18 +1791,10 @@ function showPreviewFailure(file, options = {}) {
     const fallback = document.createElement('div');
     fallback.className = 'preview-fallback';
     const title = document.createElement('h3');
-    const errorCode = options.cause?.code;
-    title.textContent = errorCode === 'NETWORK_FAILED'
-        ? '파일을 가져오지 못했습니다.'
-        : errorCode === 'INTEGRITY_FAILED' || errorCode === 'AUTHENTICATION_FAILED'
-            ? '파일 무결성을 확인하지 못했습니다.'
-            : '이 형식은 안전한 미리보기를 지원하지 않습니다.';
+    const presentation = describeFileError(options.cause);
+    title.textContent = presentation.title;
     const message = document.createElement('p');
-    message.textContent = errorCode === 'NETWORK_FAILED'
-        ? '네트워크 연결을 확인한 뒤 다시 시도해 주세요. 검증되지 않은 파일은 다운로드할 수 없습니다.'
-        : errorCode === 'INTEGRITY_FAILED' || errorCode === 'AUTHENTICATION_FAILED'
-            ? '암호문 또는 인증 태그가 예상 값과 다릅니다. 검증되지 않은 파일은 다운로드할 수 없습니다.'
-            : '파일 bytes는 검증됐지만 브라우저에서 안전하게 표시할 수 없어 다운로드만 제공합니다.';
+    message.textContent = presentation.message;
     fallback.append(title, message);
     dom.previewBody.appendChild(fallback);
     dom.previewPrintButton.disabled = true;

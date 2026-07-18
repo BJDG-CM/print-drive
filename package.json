@@ -8,6 +8,7 @@
     "test": "node --test --test-isolation=none tests/*.test.mjs && python -m unittest discover -s tests -p \"test_*.py\" && node scripts/smoke_test.mjs",
     "build": "node scripts/build_dist.mjs",
     "verify": "npm run check && npm test && npm run build && node scripts/check_dist.mjs",
+    "verify:production": "node scripts/verify_production_vault.mjs",
     "config:setup": "node scripts/config_cli.mjs setup",
     "config:check": "node scripts/config_cli.mjs check",
     "sync:dry-run": "node scripts/config_cli.mjs dry-run",
