@@ -50,6 +50,18 @@ npm run portable:test
 
 빌드는 Node SEA 실행 파일, 기본 설정, 빈 Workspace, 안내문을 하나의 ZIP으로 만들고 SHA-256 sidecar를 생성한다. native smoke test는 PATH를 비운 채 ZIP 속 실행 파일을 시작해 UI asset 로딩과 실제 AES-GCM 암복호화 cycle을 확인한다. Actions는 모든 third-party action을 full commit SHA로 고정한다.
 
+실제 GitHub 쓰기 경로 검증은 일반 CI에서 실행하지 않는다. 별도의 일회용 브랜치 이름과 자격 증명을 명시한 경우에만 다음 opt-in 검사를 실행한다.
+
+```powershell
+$env:PRINT_DRIVE_INTEGRATION_TOKEN = '<fine-grained token>'
+$env:PRINT_DRIVE_INTEGRATION_REPO = 'BJDG-CM/print-drive'
+$env:PRINT_DRIVE_INTEGRATION_BRANCH = 'print-drive-integration/manual-check'
+$env:PRINT_DRIVE_INTEGRATION_PASSPHRASE = '<vault passphrase>'
+npm run integration:github
+```
+
+검사는 `main`을 거부하고 새 전용 브랜치가 이미 있으면 재사용하지 않는다. 정확한 원격 vault snapshot에서 중첩 파일을 암호화해 원자 commit을 적용하고, 다시 내려받아 schema 3·상대 경로·평문 일치를 확인한 후 branch를 삭제한다. 정리에 실패하면 수동으로 지워야 할 정확한 branch 이름을 출력한다. token과 passphrase는 출력하지 않는다.
+
 ## 보안 경계
 
 - 로컬 서버는 loopback만 수락하고 Host, 세션 query token, 변경 요청의 CSRF token을 검증한다.
