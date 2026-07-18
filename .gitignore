@@ -7,5 +7,6 @@ screenshots/
 .env
 private_files/
 .print-drive-passphrase
+.print-drive-state.json
 .print-drive-vault.lock
 print-drive.config.json

@@ -57,6 +57,8 @@ const DEFAULT_SOURCE_DIR = 'private_files';
 const DEFAULT_OUTPUT_DIR = 'files';
 const DEFAULT_MANIFEST_NAME = 'manifest.enc';
 const DEFAULT_PASSWORD_FILE = '.print-drive-passphrase';
+const STATE_FILE_NAME = '.print-drive-state.json';
+const STATE_VERSION = 1;
 
 const IGNORED_NAMES = new Set(['.DS_Store', 'Thumbs.db', 'desktop.ini']);
 const IGNORED_PREFIXES = ['.', '~$', '~'];
@@ -66,6 +68,7 @@ export async function main(args = process.argv.slice(2)) {
     const options = parseArgs(args);
     const { sourceDir, outputDir, passwordFile } = getConfiguredPaths(options);
     const manifestPath = path.join(outputDir, options.manifestName);
+    const statePath = path.join(path.dirname(outputDir), STATE_FILE_NAME);
 
     if (options.rotatePassphrase) {
         const { rotatePassword } = await import('./set_password.mjs');
@@ -88,6 +91,7 @@ export async function main(args = process.argv.slice(2)) {
     }
 
     return withVaultWriterLock(outputDir, async () => {
+        const stats = createRunStats();
         await assertPublicFilesClean(outputDir, {
             manifestName: options.manifestName,
             displayDir: displayPath(outputDir)
@@ -95,23 +99,25 @@ export async function main(args = process.argv.slice(2)) {
         const existing = await loadExistingVault(manifestPath, passphrase, options);
         if (existing?.kind === 'v2') {
             await recoverUnreferencedBlobs(outputDir, existing.envelope.objectIndex);
-            await syncV2Vault({ existing, sourceDir, outputDir, manifestPath, options });
+            await syncV2Vault({ existing, sourceDir, outputDir, manifestPath, statePath, options, stats });
         } else if (existing?.kind === 'v1') {
-            await migrateV1Vault({ existing, outputDir, manifestPath, passphrase, options });
+            await migrateV1Vault({ existing, outputDir, manifestPath, passphrase, options, stats });
         } else {
             await assertNoOrphanBlobs(outputDir);
-            await createInitialVault({ sourceDir, outputDir, manifestPath, passphrase, options });
+            await createInitialVault({ sourceDir, outputDir, manifestPath, statePath, passphrase, options, stats });
         }
 
         await assertPublicFilesClean(outputDir, {
             manifestName: options.manifestName,
             displayDir: displayPath(outputDir)
         });
+        printRunStats(stats);
+        return stats;
     });
 }
 
-async function createInitialVault({ sourceDir, outputDir, manifestPath, passphrase, options }) {
-    const sourceFiles = await readSourceFiles(sourceDir);
+async function createInitialVault({ sourceDir, outputDir, manifestPath, statePath, passphrase, options, stats }) {
+    const sourceFiles = await readSourceFiles(sourceDir, { fullScan: true, stats });
     const vaultId = randomHex(16);
     const vaultKey = randomBytes(32);
     const cryptoDescriptor = createCryptoDescriptor(options.paddingBytes);
@@ -124,7 +130,7 @@ async function createInitialVault({ sourceDir, outputDir, manifestPath, passphra
         source,
         logicalId: randomHex(16)
     }));
-    await buildAndPublish({
+    const published = await buildAndPublish({
         outputDir,
         manifestPath,
         vaultId,
@@ -134,12 +140,18 @@ async function createInitialVault({ sourceDir, outputDir, manifestPath, passphra
         plans,
         createdAt: now,
         revision: 1,
-        existingManifest: null
+        verifyAll: true,
+        stats
+    });
+    stats.newBlobs = sourceFiles.length;
+    stats.manifestChanged = true;
+    await writeSourceState(statePath, sourceDir, sourceFiles, published.envelope, published.manifest, {
+        fullAudit: true
     });
     console.log(`Created v2 vault with ${sourceFiles.length} file(s) in ${displayPath(outputDir)}.`);
 }
 
-async function syncV2Vault({ existing, sourceDir, outputDir, manifestPath, options }) {
+async function syncV2Vault({ existing, sourceDir, outputDir, manifestPath, statePath, options, stats }) {
     const { envelope, manifest, vaultKey } = existing;
     const configuredPadding = envelope.crypto.padding.blockSize;
     if (options.paddingExplicit && options.paddingBytes !== configuredPadding) {
@@ -149,7 +161,13 @@ async function syncV2Vault({ existing, sourceDir, outputDir, manifestPath, optio
         throw new Error('Use set_password.mjs to change KDF parameters without re-encrypting blobs.');
     }
 
-    const sourceFiles = await readSourceFiles(sourceDir);
+    const cachedState = options.fullScan ? null : await loadSourceState(statePath, sourceDir, envelope, manifest);
+    const sourceFiles = await readSourceFiles(sourceDir, {
+        state: cachedState,
+        manifest,
+        fullScan: options.fullScan,
+        stats
+    });
     const plans = planIncrementalUpdate(sourceFiles, manifest.files);
     const candidatePreview = plans
         .map((plan) => plan.kind === 'reuse' ? plan.file : null)
@@ -158,13 +176,23 @@ async function syncV2Vault({ existing, sourceDir, outputDir, manifestPath, optio
         candidatePreview.length !== manifest.files.length;
 
     if (!changed) {
-        await verifyAllObjects(envelope, manifest, vaultKey, outputDir, null);
+        if (options.verifyAll) {
+            await verifyCandidateObjects(envelope, manifest, vaultKey, outputDir, null, {
+                verifyAll: true,
+                stats
+            });
+        }
         await assertExactBlobSet(outputDir, envelope.objectIndex);
+        stats.unchangedBlobs = manifest.files.length;
+        await writeSourceState(statePath, sourceDir, sourceFiles, envelope, manifest, {
+            fullAudit: options.fullScan || options.verifyAll || !cachedState,
+            previousState: cachedState
+        });
         console.log(`No content changes detected; reused all ${manifest.files.length} immutable blob(s).`);
         return;
     }
 
-    await buildAndPublish({
+    const published = await buildAndPublish({
         outputDir,
         manifestPath,
         vaultId: envelope.vaultId,
@@ -174,13 +202,21 @@ async function syncV2Vault({ existing, sourceDir, outputDir, manifestPath, optio
         plans,
         createdAt: manifest.createdAt,
         revision: manifest.revision + 1,
-        existingManifest: manifest
+        verifyAll: options.verifyAll,
+        stats
     });
     const newBlobCount = plans.filter((plan) => plan.kind === 'encrypt').length;
+    stats.newBlobs = newBlobCount;
+    stats.unchangedBlobs = plans.length - newBlobCount;
+    stats.manifestChanged = true;
+    await writeSourceState(statePath, sourceDir, sourceFiles, published.envelope, published.manifest, {
+        fullAudit: options.fullScan || options.verifyAll || !cachedState,
+        previousState: cachedState
+    });
     console.log(`Updated v2 vault: ${newBlobCount} new blob(s), ${plans.length - newBlobCount} reused.`);
 }
 
-async function migrateV1Vault({ existing, outputDir, manifestPath, passphrase, options }) {
+async function migrateV1Vault({ existing, outputDir, manifestPath, passphrase, options, stats }) {
     if (!options.migrateV1) {
         throw new Error('A v1 vault was found. Re-run with --migrate-v1 to perform a verified transactional migration.');
     }
@@ -229,8 +265,11 @@ async function migrateV1Vault({ existing, outputDir, manifestPath, passphrase, o
         plans,
         createdAt: canonicalDateOrNow(v1Manifest.createdAt),
         revision: 1,
-        existingManifest: null
+        verifyAll: true,
+        stats
     });
+    stats.newBlobs = plans.length;
+    stats.manifestChanged = true;
     console.log(`Migrated ${plans.length} file(s) from v1 to v2 transactionally.`);
 }
 
@@ -244,7 +283,8 @@ async function buildAndPublish({
     plans,
     createdAt,
     revision,
-    existingManifest
+    verifyAll,
+    stats
 }) {
     const stageRoot = await mkdtemp(path.join(path.dirname(outputDir), '.print-drive-txn-'));
     const stageFilesDir = path.join(stageRoot, 'files');
@@ -270,7 +310,7 @@ async function buildAndPublish({
                 files.push(plan.file);
                 continue;
             }
-            const { source, disposable } = await materializeSource(plan.source);
+            const { source, disposable } = await materializeSource(plan.source, stats);
             try {
                 const { file, encrypted } = createEncryptedFile({
                     source,
@@ -317,7 +357,10 @@ async function buildAndPublish({
         };
         validateEnvelopeV2(envelope);
         await writeDurableExclusive(stageManifestPath, serializeEnvelope(envelope));
-        await verifyAllObjects(envelope, payload, vaultKey, outputDir, stageFilesDir);
+        await verifyCandidateObjects(envelope, payload, vaultKey, outputDir, stageFilesDir, {
+            verifyAll,
+            stats
+        });
 
         triggerFailpoint('before-blob-publish');
         for (const object of objectIndex.objects) {
@@ -350,8 +393,8 @@ async function buildAndPublish({
 
         await garbageCollectBlobs(outputDir, objectIndex);
         triggerFailpoint('after-gc');
-        await verifyAllObjects(envelope, payload, vaultKey, outputDir, null);
         await assertExactBlobSet(outputDir, objectIndex);
+        return { envelope, manifest: payload };
     } catch (error) {
         if (!manifestCommitted) {
             for (const name of publishedBlobNames) {
@@ -456,10 +499,12 @@ function planIncrementalUpdate(sourceFiles, oldFiles) {
     return plans;
 }
 
-async function readSourceFiles(sourceDir) {
+async function readSourceFiles(sourceDir, options = {}) {
     const entries = await readdir(sourceDir, { withFileTypes: true });
     const files = [];
     const canonicalNames = new Set();
+    const cachedByName = new Map((options.state?.files || []).map((file) => [file.name, file]));
+    const manifestByName = new Map((options.manifest?.files || []).map((file) => [file.name, file]));
     for (const entry of entries) {
         if (!entry.isFile() || shouldIgnore(entry.name)) {
             continue;
@@ -471,19 +516,37 @@ async function readSourceFiles(sourceDir) {
         }
         canonicalNames.add(nameKey);
         const absolutePath = path.join(sourceDir, entry.name);
-        const before = await stat(absolutePath);
-        if (before.size > MAX_FILE_BYTES) {
+        const before = await stat(absolutePath, { bigint: true });
+        const size = Number(before.size);
+        if (size > MAX_FILE_BYTES) {
             throw new Error(`Source file exceeds the 512 MiB v2 limit: ${entry.name}`);
         }
-        const { after, sha256 } = await hashStableSourceFile(absolutePath, before, entry.name);
+        const metadata = sourceMetadata(before);
+        const cached = cachedByName.get(name);
+        const manifestFile = manifestByName.get(name);
+        const canReuse = !options.fullScan
+            && cached
+            && manifestFile
+            && cached.size === size
+            && cached.mtimeNs === metadata.mtimeNs
+            && cached.fileId === metadata.fileId
+            && cached.sha256 === manifestFile.sha256
+            && cached.logicalId === manifestFile.logicalId
+            && cached.blobId === manifestFile.blobId
+            && manifestFile.size === size;
+        const hashed = canReuse
+            ? { after: before, sha256: cached.sha256 }
+            : await hashStableSourceFile(absolutePath, before, entry.name, options.stats);
         files.push({
             name,
             originalName: entry.name,
             absolutePath,
-            size: after.size,
-            sha256,
-            mtimeMs: after.mtimeMs,
-            modifiedAt: after.mtime.toISOString()
+            size: Number(hashed.after.size),
+            sha256: hashed.sha256,
+            mtimeMs: Number(hashed.after.mtimeMs),
+            mtimeNs: hashed.after.mtimeNs.toString(),
+            fileId: fileIdentity(hashed.after),
+            modifiedAt: new Date(Number(hashed.after.mtimeMs)).toISOString()
         });
     }
     files.sort((left, right) => compareUnicode(left.name, right.name));
@@ -493,7 +556,7 @@ async function readSourceFiles(sourceDir) {
     return files;
 }
 
-async function hashStableSourceFile(absolutePath, before, displayName) {
+async function hashStableSourceFile(absolutePath, before, displayName, stats) {
     const handle = await open(absolutePath, 'r');
     const hash = createHash('sha256');
     const chunk = Buffer.allocUnsafe(1024 * 1024);
@@ -509,24 +572,30 @@ async function hashStableSourceFile(absolutePath, before, displayName) {
         chunk.fill(0);
         await handle.close();
     }
-    const after = await stat(absolutePath);
-    if (before.size !== after.size || before.mtimeMs !== after.mtimeMs || totalBytes !== after.size) {
+    const after = await stat(absolutePath, { bigint: true });
+    if (before.size !== after.size || before.mtimeNs !== after.mtimeNs || fileIdentity(before) !== fileIdentity(after) || BigInt(totalBytes) !== after.size) {
         throw new Error(`Source file changed while it was being hashed: ${displayName}`);
+    }
+    if (stats) {
+        stats.sourceFilesHashed += 1;
+        stats.sourceBytesRead += totalBytes;
     }
     return { after, sha256: hash.digest('hex') };
 }
 
-async function materializeSource(source) {
+async function materializeSource(source, stats) {
     if (source.bytes) return { source, disposable: false };
-    const before = await stat(source.absolutePath);
-    if (before.size !== source.size || before.mtimeMs !== source.mtimeMs) {
+    const before = await stat(source.absolutePath, { bigint: true });
+    if (Number(before.size) !== source.size || before.mtimeNs.toString() !== source.mtimeNs || fileIdentity(before) !== source.fileId) {
         throw new Error(`Source file changed before encryption: ${source.originalName}`);
     }
     const bytes = await readFile(source.absolutePath);
-    const after = await stat(source.absolutePath);
+    if (stats) stats.sourceBytesRead += bytes.byteLength;
+    const after = await stat(source.absolutePath, { bigint: true });
     if (
         before.size !== after.size ||
-        before.mtimeMs !== after.mtimeMs ||
+        before.mtimeNs !== after.mtimeNs ||
+        fileIdentity(before) !== fileIdentity(after) ||
         bytes.byteLength !== source.size ||
         sha256Hex(bytes) !== source.sha256
     ) {
@@ -559,7 +628,7 @@ async function loadExistingVault(manifestPath, passphrase, options) {
     throw new Error(`Unsupported vault version: ${envelope.version}`);
 }
 
-async function verifyAllObjects(envelope, manifest, vaultKey, outputDir, stageFilesDir) {
+async function verifyCandidateObjects(envelope, manifest, vaultKey, outputDir, stageFilesDir, options = {}) {
     validateEnvelopeV2(envelope);
     const decryptedManifest = decryptManifestV2(envelope, vaultKey);
     if (JSON.stringify(decryptedManifest) !== JSON.stringify(manifest)) {
@@ -568,12 +637,165 @@ async function verifyAllObjects(envelope, manifest, vaultKey, outputDir, stageFi
     for (const file of manifest.files) {
         const name = `${file.blobId}.bin`;
         const staged = stageFilesDir ? path.join(stageFilesDir, name) : null;
-        const blobPath = staged && await exists(staged) ? staged : path.join(outputDir, name);
+        const isStaged = Boolean(staged && await exists(staged));
+        const blobPath = isStaged ? staged : path.join(outputDir, name);
+        if (!options.verifyAll && !isStaged) {
+            const objectStat = await stat(blobPath);
+            if (!objectStat.isFile() || objectStat.size !== file.encryptedSize) {
+                throw new Error(`Referenced immutable blob is missing or has the wrong size: ${file.blobId}`);
+            }
+            continue;
+        }
         const encrypted = await readFile(blobPath);
         const plaintext = decryptFileV2(file, encrypted, vaultKey, envelope.vaultId);
         plaintext.fill(0);
         encrypted.fill(0);
+        if (options.stats) options.stats.blobDecryptions += 1;
     }
+}
+
+async function loadSourceState(statePath, sourceDir, envelope, manifest) {
+    if (!await exists(statePath)) return null;
+    try {
+        const value = JSON.parse(await readFile(statePath, 'utf8'));
+        validateSourceState(value);
+        const sourceId = await sourceDirectoryId(sourceDir);
+        if (
+            value.sourceId !== sourceId ||
+            value.vaultId !== envelope.vaultId ||
+            value.manifestId !== manifest.id ||
+            value.revision !== manifest.revision
+        ) {
+            console.warn('Local source state does not match the current vault; performing a safe full scan.');
+            return null;
+        }
+        const manifestByName = new Map(manifest.files.map((file) => [file.name, file]));
+        if (value.files.length !== manifest.files.length || value.files.some((cached) => {
+            const file = manifestByName.get(cached.name);
+            return !file
+                || cached.size !== file.size
+                || cached.sha256 !== file.sha256
+                || cached.logicalId !== file.logicalId
+                || cached.blobId !== file.blobId;
+        })) {
+            console.warn('Local source state mappings do not match the current manifest; performing a safe full scan.');
+            return null;
+        }
+        return value;
+    } catch (error) {
+        console.warn(`Local source state is invalid; performing a safe full scan (${error.message}).`);
+        return null;
+    }
+}
+
+async function writeSourceState(statePath, sourceDir, sourceFiles, envelope, manifest, options = {}) {
+    const manifestByName = new Map(manifest.files.map((file) => [file.name, file]));
+    const files = sourceFiles.map((source) => {
+        const file = manifestByName.get(source.name);
+        if (!file || file.size !== source.size || file.sha256 !== source.sha256) {
+            throw new Error(`Cannot cache source state because manifest mapping is missing: ${source.name}`);
+        }
+        return {
+            name: source.name,
+            size: source.size,
+            mtimeNs: source.mtimeNs,
+            fileId: source.fileId,
+            sha256: source.sha256,
+            logicalId: file.logicalId,
+            blobId: file.blobId
+        };
+    }).sort((left, right) => compareUnicode(left.name, right.name));
+    const value = {
+        version: STATE_VERSION,
+        sourceId: await sourceDirectoryId(sourceDir),
+        vaultId: envelope.vaultId,
+        manifestId: manifest.id,
+        revision: manifest.revision,
+        lastFullAuditAt: options.fullAudit
+            ? new Date().toISOString()
+            : options.previousState?.lastFullAuditAt || null,
+        files
+    };
+    validateSourceState(value);
+    await mkdir(path.dirname(statePath), { recursive: true });
+    const temporaryPath = path.join(path.dirname(statePath), `.${path.basename(statePath)}.${randomHex(8)}.tmp`);
+    try {
+        await writeDurableExclusive(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, 0o600);
+        triggerFailpoint('before-state-commit');
+        await rename(temporaryPath, statePath);
+        await syncDirectoryBestEffort(path.dirname(statePath));
+    } finally {
+        await rm(temporaryPath, { force: true });
+    }
+}
+
+function validateSourceState(value) {
+    assertStateObject(value, ['version', 'sourceId', 'vaultId', 'manifestId', 'revision', 'lastFullAuditAt', 'files'], 'state');
+    if (value.version !== STATE_VERSION) throw new Error('unsupported state version');
+    if (!/^[0-9a-f]{64}$/.test(value.sourceId || '')) throw new Error('invalid sourceId');
+    if (!/^[0-9a-f]{32}$/.test(value.vaultId || '') || !/^[0-9a-f]{32}$/.test(value.manifestId || '')) throw new Error('invalid vault identity');
+    if (!Number.isSafeInteger(value.revision) || value.revision < 1) throw new Error('invalid revision');
+    if (value.lastFullAuditAt !== null && (typeof value.lastFullAuditAt !== 'string' || new Date(value.lastFullAuditAt).toISOString() !== value.lastFullAuditAt)) {
+        throw new Error('invalid lastFullAuditAt');
+    }
+    if (!Array.isArray(value.files) || value.files.length > MAX_MANIFEST_FILES) throw new Error('invalid state files');
+    let previousName = null;
+    const names = new Set();
+    for (const [index, file] of value.files.entries()) {
+        assertStateObject(file, ['name', 'size', 'mtimeNs', 'fileId', 'sha256', 'logicalId', 'blobId'], `state.files[${index}]`);
+        if (typeof file.name !== 'string' || !file.name || file.name !== file.name.normalize('NFC') || /[\\/\u0000\r\n]/.test(file.name)) {
+            throw new Error('invalid cached filename');
+        }
+        const nameKey = canonicalFileNameKey(file.name);
+        if (names.has(nameKey) || (previousName !== null && compareUnicode(previousName, file.name) > 0)) throw new Error('duplicate or unsorted cached filename');
+        if (!Number.isSafeInteger(file.size) || file.size < 0 || file.size > MAX_FILE_BYTES) throw new Error('invalid cached size');
+        if (!/^[0-9]+$/.test(file.mtimeNs || '')) throw new Error('invalid cached mtime');
+        if (file.fileId !== null && (typeof file.fileId !== 'string' || !/^[0-9]+:[0-9]+$/.test(file.fileId))) throw new Error('invalid cached file identity');
+        if (!/^[0-9a-f]{64}$/.test(file.sha256 || '') || !/^[0-9a-f]{32}$/.test(file.logicalId || '') || !/^[0-9a-f]{32}$/.test(file.blobId || '')) throw new Error('invalid cached hash or identity');
+        names.add(nameKey);
+        previousName = file.name;
+    }
+    return value;
+}
+
+function assertStateObject(value, keys, label) {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) throw new Error(`${label} must be an object`);
+    const actual = Object.keys(value).sort();
+    const expected = [...keys].sort();
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(`${label} has missing or unknown fields`);
+}
+
+async function sourceDirectoryId(sourceDir) {
+    const canonical = path.normalize(await realpath(sourceDir));
+    return sha256Hex(Buffer.from(process.platform === 'win32' ? canonical.toLowerCase() : canonical, 'utf8'));
+}
+
+function sourceMetadata(fileStat) {
+    return { mtimeNs: fileStat.mtimeNs.toString(), fileId: fileIdentity(fileStat) };
+}
+
+function fileIdentity(fileStat) {
+    return fileStat.ino && fileStat.ino !== 0n ? `${fileStat.dev}:${fileStat.ino}` : null;
+}
+
+function createRunStats() {
+    return {
+        sourceFilesHashed: 0,
+        sourceBytesRead: 0,
+        blobDecryptions: 0,
+        newBlobs: 0,
+        unchangedBlobs: 0,
+        manifestChanged: false
+    };
+}
+
+function printRunStats(stats) {
+    console.log(`source files fully hashed: ${stats.sourceFilesHashed}`);
+    console.log(`source bytes read: ${stats.sourceBytesRead}`);
+    console.log(`new blobs: ${stats.newBlobs}`);
+    console.log(`unchanged blobs reused: ${stats.unchangedBlobs}`);
+    console.log(`manifest changed: ${stats.manifestChanged ? 'yes' : 'no'}`);
+    console.log(`full blob decryptions: ${stats.blobDecryptions}`);
 }
 
 async function recoverUnreferencedBlobs(outputDir, objectIndex) {
@@ -771,6 +993,8 @@ function parseArgs(args) {
         initPassphrase: false,
         rotatePassphrase: false,
         migrateV1: false,
+        fullScan: false,
+        verifyAll: false,
         iterations: DEFAULT_ITERATIONS,
         iterationsExplicit: false,
         paddingBytes: DEFAULT_PADDING_BYTES,
@@ -792,6 +1016,10 @@ function parseArgs(args) {
             options.rotatePassphrase = true;
         } else if (arg === '--migrate-v1') {
             options.migrateV1 = true;
+        } else if (arg === '--full-scan') {
+            options.fullScan = true;
+        } else if (arg === '--verify-all') {
+            options.verifyAll = true;
         } else if (arg === '--iterations') {
             options.iterations = Number(requireValue(args, ++index, arg));
             options.iterationsExplicit = true;
@@ -850,11 +1078,13 @@ Options:
   --init-passphrase       Create a random passphrase file when none exists.
   --rotate-passphrase     Safely rotate only the wrapped vault key; blobs are unchanged.
   --migrate-v1            Explicitly migrate a verified v1 vault to v2.
+  --full-scan             Hash every source file and rebuild local source state.
+  --verify-all            Decrypt and authenticate every referenced encrypted object.
   --iterations <number>   PBKDF2-SHA256 count for a new vault or migration. Default: ${DEFAULT_ITERATIONS}
   --padding-bytes <num>   0 or a power-of-two padding block. Default: ${DEFAULT_PADDING_BYTES}
 
 Failpoint testing:
-  PRINT_DRIVE_FAILPOINT=before-blob-publish|after-blob-publish|before-manifest-commit|after-manifest-commit|after-gc
+  PRINT_DRIVE_FAILPOINT=before-blob-publish|after-blob-publish|before-manifest-commit|after-manifest-commit|after-gc|before-state-commit
 `);
 }
 

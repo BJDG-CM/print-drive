@@ -45,14 +45,26 @@ try {
             iterations: 200_000
         });
         process.env.PRINT_DRIVE_PASSPHRASE = NEW_PASSWORD;
+        return {
+            sourceFilesHashed: 0,
+            sourceBytesRead: 0,
+            blobDecryptions: 0,
+            newBlobs: 0,
+            unchangedBlobs: 100,
+            manifestChanged: true
+        };
     });
+    await measure('full-audit-100', fixture, () => runEncrypt(fixture, false, ['--full-scan', '--verify-all']));
 
     if (FULL) {
         process.env.PRINT_DRIVE_PASSPHRASE = OLD_PASSWORD;
         const largeFixture = await createFixture(path.join(benchmarkRoot, 'large'));
-        await writeSizedFile(path.join(largeFixture.sourceDir, 'large-101MiB.bin'), 101 * 1024 * 1024, 0xa5);
-        await measure('initial-101MiB', largeFixture, () => runEncrypt(largeFixture, true));
-        await measure('no-op-101MiB', largeFixture, () => runEncrypt(largeFixture));
+        const largePath = path.join(largeFixture.sourceDir, 'large-100MiB.bin');
+        await writeSizedFile(largePath, 100 * 1024 * 1024, 0xa5);
+        await measure('initial-100MiB', largeFixture, () => runEncrypt(largeFixture, true));
+        await measure('no-op-100MiB', largeFixture, () => runEncrypt(largeFixture));
+        await writeSizedFile(largePath, 100 * 1024 * 1024, 0x5a);
+        await measure('modify-100MiB', largeFixture, () => runEncrypt(largeFixture));
     }
 
     printResults(results, FULL);
@@ -95,7 +107,7 @@ async function writeSizedFile(filePath, size, fillByte) {
     }
 }
 
-async function runEncrypt(fixture, initial = false) {
+async function runEncrypt(fixture, initial = false, extraArgs = []) {
     const args = [
         '--source', fixture.sourceDir,
         '--out', fixture.outputDir,
@@ -104,14 +116,25 @@ async function runEncrypt(fixture, initial = false) {
     if (initial) {
         args.push('--iterations', '200000', '--padding-bytes', '0');
     }
-    await encryptMain(args);
+    args.push(...extraArgs);
+    return encryptMain(args);
 }
 
 async function measure(name, fixture, operation) {
     const before = await snapshot(fixture.outputDir);
     const rssBefore = process.memoryUsage().rss;
     const startedAt = performance.now();
-    await operation();
+    let peakRss = rssBefore;
+    const sampler = setInterval(() => {
+        peakRss = Math.max(peakRss, process.memoryUsage().rss);
+    }, 5);
+    let operationStats;
+    try {
+        operationStats = await operation();
+        peakRss = Math.max(peakRss, process.memoryUsage().rss);
+    } finally {
+        clearInterval(sampler);
+    }
     const elapsedMs = performance.now() - startedAt;
     const rssAfter = process.memoryUsage().rss;
     const after = await snapshot(fixture.outputDir);
@@ -127,6 +150,13 @@ async function measure(name, fixture, operation) {
         rssBefore,
         rssAfter,
         processHighWaterRssKiB: process.resourceUsage().maxRSS,
+        peakRss,
+        sourceFilesHashed: operationStats?.sourceFilesHashed ?? null,
+        sourceBytesRead: operationStats?.sourceBytesRead ?? null,
+        blobDecryptions: operationStats?.blobDecryptions ?? null,
+        newBlobs: operationStats?.newBlobs ?? changed.changedBlobs,
+        unchangedBlobs: operationStats?.unchangedBlobs ?? null,
+        manifestChanged: operationStats?.manifestChanged ?? changed.envelopeChanged,
         outputBytes: after.totalBytes
     });
 }
@@ -195,12 +225,12 @@ function printResults(rows, full) {
     console.log(JSON.stringify({
         generatedAt: new Date().toISOString(),
         mode: full ? 'full' : 'quick',
-        note: 'gitChangeBytesProxy/expectedUploadBytes count changed manifest.enc envelope plus new/changed immutable blobs; Git pack compression is not modeled. processHighWaterRssKiB is cumulative for the process, so use the maximum as the run peak rather than treating each row as an isolated peak.',
+        note: 'gitChangeBytesProxy/expectedUploadBytes count changed manifest.enc envelope plus new/changed immutable blobs; Git pack compression is not modeled. peakRss is sampled process RSS during each scenario; processHighWaterRssKiB remains cumulative.',
         rows
     }, null, 2));
-    console.log('\n| scenario | ms | new/changed blobs | removed blobs | manifest.enc | transfer proxy | RSS after |');
-    console.log('|---|---:|---:|---:|---|---:|---:|');
+    console.log('\n| scenario | ms | hashed files | source bytes | blob decryptions | new blobs | manifest | peak RSS |');
+    console.log('|---|---:|---:|---:|---:|---:|---|---:|');
     rows.forEach((row) => {
-        console.log(`| ${row.name} | ${row.elapsedMs} | ${row.changedBlobs} | ${row.removedBlobs} | ${row.envelopeChanged ? 'changed' : 'same'} | ${row.expectedUploadBytes} | ${row.rssAfter} |`);
+        console.log(`| ${row.name} | ${row.elapsedMs} | ${row.sourceFilesHashed ?? 'n/a'} | ${row.sourceBytesRead ?? 'n/a'} | ${row.blobDecryptions ?? 'n/a'} | ${row.newBlobs} | ${row.manifestChanged ? 'changed' : 'same'} | ${row.peakRss} |`);
     });
 }
