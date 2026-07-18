@@ -14,8 +14,11 @@ import {
     pollDeviceFlow,
     publishFallbackBranch,
     redactSensitive,
-    startDeviceFlow
+    startDeviceFlow,
+    validateAuthentication
 } from './remote_updater.mjs';
+import { pollPagesDeployment } from './deployment.mjs';
+import { inspectSourceDirectory, openSourceDirectory, selectSourceDirectory } from './source_directory.mjs';
 import { renderPortableUi } from './ui.mjs';
 import { buildWorkspaceUpdate } from './workspace_update.mjs';
 
@@ -26,6 +29,7 @@ export async function startPortableUpdater(args = process.argv.slice(2)) {
     const portableRoot = process.env.PRINT_DRIVE_PORTABLE_ROOT || (isSea() ? path.dirname(process.execPath) : SOURCE_ROOT);
     const config = validateWorkspaceConfig(JSON.parse(await readFile(path.join(portableRoot, 'print-drive.workspace.json'), 'utf8')));
     const workspace = path.join(portableRoot, 'Workspace');
+    let sourceDirectory = workspace;
     const sessionToken = randomBytes(32).toString('base64url');
     const csrf = randomBytes(32).toString('base64url');
     const token = new MemoryToken();
@@ -43,13 +47,42 @@ export async function startPortableUpdater(args = process.argv.slice(2)) {
             }
             if (request.method === 'GET' && route(request) === '/api/session') {
                 return sendJson(response, 200, {
-                    csrf, workspace, owner: config.owner, repo: config.repo, branch: config.branch,
-                    deviceFlowConfigured: Boolean(config.oauthClientId)
+                    csrf, workspace, source: await inspectSourceDirectory(sourceDirectory), owner: config.owner, repo: config.repo, branch: config.branch,
+                    deviceFlowConfigured: Boolean(config.oauthClientId), authenticated: Boolean(token.get()), pagesUrl: config.pagesUrl || null
                 });
             }
             assertCsrf(request, csrf);
             const body = await readJsonBody(request);
+            if (request.method === 'POST' && route(request) === '/api/source/select') {
+                const selected = await selectSourceDirectory(sourceDirectory);
+                if (selected) sourceDirectory = (await inspectSourceDirectory(selected)).path;
+                pendingUpdate = null; pendingFallbackCommit = null;
+                return sendJson(response, 200, { source: await inspectSourceDirectory(sourceDirectory), cancelled: !selected });
+            }
+            if (request.method === 'POST' && route(request) === '/api/source/open') {
+                openSourceDirectory(sourceDirectory);
+                return sendJson(response, 200, { opened: true });
+            }
+            if (request.method === 'POST' && route(request) === '/api/source/refresh') {
+                pendingUpdate = null; pendingFallbackCommit = null;
+                return sendJson(response, 200, { source: await inspectSourceDirectory(sourceDirectory) });
+            }
+            if (request.method === 'POST' && route(request) === '/api/auth/pat') {
+                try {
+                    token.set(body.token);
+                    body.token = '';
+                    await validateAuthentication(new GitHubApi({ token: token.get() }), config);
+                    return sendJson(response, 200, { authenticated: true, method: 'pat' });
+                } catch (error) {
+                    token.clear();
+                    throw error;
+                }
+            }
+            if (request.method === 'POST' && route(request) === '/api/auth/status') {
+                return sendJson(response, 200, { authenticated: Boolean(token.get()) });
+            }
             if (request.method === 'POST' && route(request) === '/api/device/start') {
+                if (!config.oauthClientId) throw Object.assign(new Error('이 패키지에는 기기 로그인이 설정되지 않았습니다. Fine-grained token을 사용하세요.'), { code: 'DEVICE_FLOW_NOT_CONFIGURED' });
                 deviceFlow = await startDeviceFlow({ clientId: config.oauthClientId });
                 return sendJson(response, 200, { userCode: deviceFlow.userCode, verificationUri: deviceFlow.verificationUri });
             }
@@ -62,34 +95,44 @@ export async function startPortableUpdater(args = process.argv.slice(2)) {
                     interval: deviceFlow.interval,
                     signal: deviceAbort.signal
                 }));
+                await validateAuthentication(new GitHubApi({ token: token.get() }), config);
                 deviceFlow = null;
                 return sendJson(response, 200, { authenticated: true });
             }
             if (request.method === 'POST' && route(request) === '/api/preview') {
-                if (body.token) token.set(body.token);
+                if (!token.get()) throw Object.assign(new Error('GitHub 인증을 먼저 완료하세요.'), { code: 'AUTHENTICATION_REQUIRED' });
                 const api = new GitHubApi({ token: token.get() });
                 const snapshot = await fetchExactVaultSnapshot(api, config);
                 const envelope = parseEnvelopeText(snapshot.files.get(`${snapshot.prefix}/manifest.enc`).toString('utf8'));
                 if (config.expectedVaultId && envelope.vaultId !== config.expectedVaultId) throw new Error('원격 vault ID가 휴대형 설정과 일치하지 않습니다.');
                 try {
                     pendingUpdate = await buildWorkspaceUpdate({
-                        snapshot, workspaceDirectory: workspace, passphrase: body.passphrase,
+                        snapshot, workspaceDirectory: sourceDirectory, passphrase: body.passphrase,
                         mode: body.mode, removePaths: body.removePaths || [], confirmEmptyMirror: body.confirmEmptyMirror === true
                     });
                 } finally {
                     body.passphrase = '';
                 }
                 pendingFallbackCommit = null;
-                return sendJson(response, 200, { baseSha: pendingUpdate.baseSha, plan: pendingUpdate.plan });
+                return sendJson(response, 200, {
+                    baseSha: pendingUpdate.baseSha, plan: pendingUpdate.plan,
+                    changeCount: pendingUpdate.changeCount, uploadBytes: pendingUpdate.uploadBytes,
+                    manifestSha256: pendingUpdate.manifestSha256
+                });
             }
             if (request.method === 'POST' && route(request) === '/api/apply') {
                 if (!pendingUpdate) throw new Error('먼저 변경 계획을 미리보세요.');
-                if (body.token) token.set(body.token);
+                if (body.confirm !== true) throw new Error('변경 수와 암호화 업로드 크기를 확인한 뒤 적용 확인에 체크하세요.');
                 const api = new GitHubApi({ token: token.get() });
                 try {
                     const result = await applyAtomicEncryptedUpdate(api, config, pendingUpdate);
+                    const deployment = await pollPagesDeployment({
+                        pagesUrl: config.pagesUrl,
+                        manifestSha256: pendingUpdate.manifestSha256,
+                        objectPath: pendingUpdate.targetObjectPath
+                    });
                     pendingUpdate = null; token.clear();
-                    return sendJson(response, 200, { ...result, pagesUrl: config.pagesUrl || null });
+                    return sendJson(response, 200, { ...result, pagesUrl: config.pagesUrl || null, deployment });
                 } catch (error) {
                     if (error.code === 'BRANCH_PROTECTION_BLOCKED') {
                         pendingFallbackCommit = error.pendingCommitSha;
@@ -104,9 +147,13 @@ export async function startPortableUpdater(args = process.argv.slice(2)) {
                 pendingUpdate = null; pendingFallbackCommit = null; token.clear();
                 return sendJson(response, 200, result);
             }
+            if (request.method === 'POST' && route(request) === '/api/cancel') {
+                deviceAbort?.abort(); deviceFlow = null; token.clear(); pendingUpdate = null; pendingFallbackCommit = null;
+                return sendJson(response, 200, { cancelled: true });
+            }
             return sendJson(response, 404, { error: '찾을 수 없는 로컬 경로입니다.' });
         } catch (error) {
-            const safe = redactSensitive(error.message, token.get());
+            const safe = localizeError(error, token.get());
             return sendJson(response, error.status && error.status >= 400 ? error.status : 400, { error: safe, code: error.code || 'LOCAL_REQUEST_FAILED' });
         }
     });
@@ -169,6 +216,20 @@ function readJsonBody(request) {
 function sendJson(response, status, value) { response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }); response.end(JSON.stringify(value)); }
 function sendHtml(response, value, nonce) { response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'content-security-policy': `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`, 'x-content-type-options': 'nosniff' }); response.end(value); }
 function openBrowser(url) { if (process.platform === 'win32') spawn('cmd.exe', ['/d', '/s', '/c', 'start', '', url], { detached: true, stdio: 'ignore', windowsHide: true }).unref(); }
+
+export function localizeError(error, tokenValue = null) {
+    const messages = {
+        INVALID_TOKEN: 'Token이 올바르지 않거나 만료되었습니다. 새 fine-grained token을 입력하세요.',
+        REPOSITORY_NOT_ACCESSIBLE: '저장소를 찾을 수 없거나 이 token에 BJDG-CM/print-drive 접근 권한이 없습니다.',
+        CONTENTS_WRITE_REQUIRED: '이 token에는 대상 저장소의 Contents: Read and write 권한이 필요합니다.',
+        SSO_AUTHORIZATION_REQUIRED: '조직 SSO 승인이 필요합니다. GitHub에서 token의 SSO 승인을 완료한 뒤 다시 시도하세요.',
+        GITHUB_RATE_LIMITED: 'GitHub API 사용 한도에 도달했습니다. 잠시 후 다시 시도하세요.',
+        AUTHENTICATION_REQUIRED: 'GitHub 인증을 먼저 완료하세요.'
+    };
+    if (messages[error.code]) return messages[error.code];
+    if (error.cause?.code && ['ENOTFOUND', 'ECONNRESET', 'ETIMEDOUT'].includes(error.cause.code)) return 'GitHub 네트워크에 연결할 수 없습니다. 인터넷 연결을 확인하세요.';
+    return redactSensitive(error.message, tokenValue);
+}
 
 if (process.argv[1] && (isSea() || import.meta.url === pathToFileURL(process.argv[1]).href)) {
     startPortableUpdater().catch((error) => { console.error(`Print Drive portable updater failed: ${error.message}`); process.exit(1); });

@@ -79,7 +79,10 @@ test('management package creation is separated and uses accurate local-apply lab
     assert.match(management, /npm run update:apply/);
     assert.match(app, /업데이트 패키지 다운로드 요청됨 · 아직 적용되지 않음/);
     assert.match(app, /name: 'print-drive-update\.json'/);
-    assert.match(management, /최신 휴대형 패키지/);
+    assert.match(management, />Windows용 다운로드</);
+    assert.match(management, />SHA-256 확인</);
+    assert.match(management, />사용 방법</);
+    assert.match(management, /releases\/latest\/download\/PrintDrive-Portable-windows-x64\.zip/);
     assert.match(management, /웹 보관함은 GitHub token을 요청하거나 저장하지 않습니다/);
     assert.doesNotMatch(html, /capability|master key|key slot|object index|envelope|\bv[12]\b/i);
 });

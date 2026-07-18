@@ -9,6 +9,7 @@ export class GitHubApiError extends Error {
         this.code = options.code || 'GITHUB_API_FAILED';
         this.status = options.status || null;
         this.response = options.response || null;
+        this.responseHeaders = Object.freeze(options.responseHeaders || {});
     }
 }
 
@@ -51,11 +52,37 @@ export class GitHubApi {
             throw new GitHubApiError(`GitHub API ${method} ${pathname} failed (${response.status}): ${payload?.message || 'unknown error'}`, {
                 status: response.status,
                 response: payload,
+                responseHeaders: safeResponseHeaders(response.headers),
                 token,
                 code: response.status === 409 || response.status === 422 ? 'GITHUB_CONFLICT' : 'GITHUB_API_FAILED'
             });
         }
         return payload;
+    }
+}
+
+export async function validateAuthentication(api, config) {
+    validateRepositoryConfig(config);
+    try {
+        const repository = await api.request('GET', repoPath(config, ''));
+        if (repository?.permissions && repository.permissions.push === false) {
+            throw new GitHubApiError('Token can read the repository but cannot write Contents.', {
+                status: 403,
+                code: 'CONTENTS_WRITE_REQUIRED'
+            });
+        }
+        return { authenticated: true, canPush: repository?.permissions?.push !== false };
+    } catch (error) {
+        if (!(error instanceof GitHubApiError)) throw error;
+        const message = String(error.response?.message || error.message || '');
+        const sso = error.responseHeaders['x-github-sso'];
+        const remaining = error.responseHeaders['x-ratelimit-remaining'];
+        if (error.status === 401) error.code = 'INVALID_TOKEN';
+        else if (error.status === 404) error.code = 'REPOSITORY_NOT_ACCESSIBLE';
+        else if (error.status === 403 && sso) error.code = 'SSO_AUTHORIZATION_REQUIRED';
+        else if ((error.status === 403 || error.status === 429) && remaining === '0') error.code = 'GITHUB_RATE_LIMITED';
+        else if (error.status === 403 && /resource not accessible|permission|write access|forbidden/i.test(message)) error.code = 'CONTENTS_WRITE_REQUIRED';
+        throw error;
     }
 }
 
@@ -196,6 +223,15 @@ export function redactSensitive(value, token) {
     let text = String(value || '');
     if (token) text = text.replaceAll(token, '[redacted]');
     return text.replace(/(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]+/g, '[redacted]');
+}
+
+function safeResponseHeaders(headers) {
+    const safe = {};
+    for (const name of ['x-github-sso', 'x-ratelimit-remaining', 'x-ratelimit-reset', 'retry-after']) {
+        const value = headers?.get?.(name);
+        if (value) safe[name] = value;
+    }
+    return safe;
 }
 
 function validateUpdate(update, prefix) {

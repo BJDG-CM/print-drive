@@ -1,12 +1,26 @@
-name: Build portable updater
+name: Build and publish portable updater
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Publish the verified assets as a GitHub Release
+        required: true
+        type: boolean
+        default: true
+      version:
+        description: Portable version without the portable-v prefix
+        required: true
+        type: string
+        default: "1.0.1"
   push:
     tags: ["portable-v*"]
 
 permissions:
   contents: read
+
+env:
+  PACKAGE_NAME: PrintDrive-Portable-windows-x64.zip
 
 jobs:
   windows-x64:
@@ -14,10 +28,11 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Checkout source without persisted credentials
+      - name: Checkout exact source without persisted credentials
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Setup pinned Node runtime
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -27,11 +42,32 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Build Windows x64 SEA archive and checksum
         run: npm run portable:build
-      - name: Prove native package starts without PATH tools
+      - name: Prove locally built native package starts without PATH tools
         run: npm run portable:test
-      - name: Scan package for tracked secrets and plaintext fixtures
+      - name: Scan source and package boundary
         run: npm run check
-      - name: Upload Windows x64 portable artifacts
+      - name: Verify archive checksum and required contents
+        shell: pwsh
+        run: |
+          $archive = Join-Path $PWD "artifacts/$env:PACKAGE_NAME"
+          $sidecar = "$archive.sha256"
+          if (-not (Test-Path -LiteralPath $archive) -or -not (Test-Path -LiteralPath $sidecar)) { throw 'Portable artifacts are missing.' }
+          $expected = ((Get-Content -LiteralPath $sidecar -Raw) -split '\s+')[0].ToLowerInvariant()
+          $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($expected -ne $actual) { throw 'Portable archive checksum mismatch.' }
+          $target = Join-Path $env:RUNNER_TEMP 'portable-content'
+          Expand-Archive -LiteralPath $archive -DestinationPath $target
+          $required = @(
+            'PrintDrive-Portable/PrintDriveUpdater.exe',
+            'PrintDrive-Portable/print-drive.workspace.json',
+            'PrintDrive-Portable/README.txt',
+            'PrintDrive-Portable/Workspace/.keep'
+          )
+          foreach ($relative in $required) {
+            if (-not (Test-Path -LiteralPath (Join-Path $target $relative))) { throw "Archive is missing $relative" }
+          }
+          if ((Get-Item -LiteralPath (Join-Path $target 'PrintDrive-Portable/PrintDriveUpdater.exe')).Length -le 0) { throw 'Portable executable is empty.' }
+      - name: Upload immutable workflow artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: PrintDrive-Portable-windows-x64
@@ -39,3 +75,105 @@ jobs:
             artifacts/PrintDrive-Portable-windows-x64.zip
             artifacts/PrintDrive-Portable-windows-x64.zip.sha256
           if-no-files-found: error
+
+  release:
+    needs: windows-x64
+    if: startsWith(github.ref, 'refs/tags/portable-v') || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Resolve and validate release tag
+        id: version
+        shell: bash
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tag="${GITHUB_REF#refs/tags/}"
+          else
+            tag="portable-v${DISPATCH_VERSION}"
+          fi
+          if [[ ! "$tag" =~ ^portable-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid portable release tag: $tag" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Download exact Windows build artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: PrintDrive-Portable-windows-x64
+          path: release-assets
+      - name: Verify downloaded artifact before publishing
+        shell: bash
+        run: |
+          cd release-assets
+          sha256sum --check "$PACKAGE_NAME.sha256"
+          test -s "$PACKAGE_NAME"
+          test -s "$PACKAGE_NAME.sha256"
+      - name: Checkout release notes only
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          path: source
+      - name: Publish only this portable tag and its two assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "release-assets/$PACKAGE_NAME" "release-assets/$PACKAGE_NAME.sha256" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" "release-assets/$PACKAGE_NAME" "release-assets/$PACKAGE_NAME.sha256" --target "$GITHUB_SHA" --title "Print Drive Portable ${TAG#portable-v}" --notes-file source/docs/PORTABLE_RELEASE_NOTES.md --repo "$GITHUB_REPOSITORY"
+          fi
+
+  verify-public-release:
+    needs: release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout verifier at released source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Setup pinned Node runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24.12.0"
+      - name: Verify public Release API, exact assets, downloads, and checksum
+        run: npm run release:verify -- --tag "${{ needs.release.outputs.tag }}"
+
+  smoke-public-windows-download:
+    needs: release
+    runs-on: windows-2025
+    permissions:
+      contents: read
+    steps:
+      - name: Download public assets and run only the downloaded executable
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          $base = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:RELEASE_TAG"
+          $archive = Join-Path $env:RUNNER_TEMP $env:PACKAGE_NAME
+          $sidecar = "$archive.sha256"
+          Invoke-WebRequest -Uri "$base/$env:PACKAGE_NAME" -OutFile $archive
+          Invoke-WebRequest -Uri "$base/$env:PACKAGE_NAME.sha256" -OutFile $sidecar
+          $expected = ((Get-Content -LiteralPath $sidecar -Raw) -split '\s+')[0].ToLowerInvariant()
+          $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($expected -ne $actual) { throw 'Public ZIP checksum mismatch.' }
+          $target = Join-Path $env:RUNNER_TEMP 'public-portable'
+          Expand-Archive -LiteralPath $archive -DestinationPath $target
+          $executable = Join-Path $target 'PrintDrive-Portable/PrintDriveUpdater.exe'
+          if (-not (Test-Path -LiteralPath $executable)) { throw 'Downloaded executable is missing.' }
+          $savedPath = $env:PATH
+          try {
+            $env:PATH = ''
+            & $executable --smoke-test
+            if ($LASTEXITCODE -ne 0) { throw "Downloaded executable smoke test failed: $LASTEXITCODE" }
+          }
+          finally { $env:PATH = $savedPath }

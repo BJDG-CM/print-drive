@@ -15,6 +15,8 @@
     "source:relink": "node scripts/relink_source.mjs",
     "portable:build": "node scripts/build_portable.mjs",
     "portable:test": "node scripts/test_portable.mjs",
+    "release:verify": "node scripts/verify_release_assets.mjs",
+    "integration:github": "node scripts/integration_github.mjs",
     "design:fixture": "node scripts/create_design_fixture.mjs",
     "benchmark": "node scripts/benchmark_v2.mjs --full",
     "benchmark:quick": "node scripts/benchmark_v2.mjs",
