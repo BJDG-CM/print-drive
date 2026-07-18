@@ -139,6 +139,42 @@ class AutoSyncGitTests(unittest.TestCase):
             handler.sync_to_github()
         self.assertEqual(handler.ahead_behind(), (1, 1))
 
+    def test_remote_ahead_clean_checkout_fast_forwards_before_encryption(self):
+        other = self.temp_root / "other-fast-forward"
+        self.repo.git(self.temp_root, "clone", "-b", "main", str(self.repo.remote), str(other))
+        self.repo.git(other, "config", "user.name", "Other Writer")
+        self.repo.git(other, "config", "user.email", "other@example.invalid")
+        (other / "remote-change.txt").write_text("remote\n", encoding="utf-8")
+        self.repo.git(other, "add", "remote-change.txt")
+        self.repo.git(other, "commit", "-m", "remote update")
+        self.repo.git(other, "push", "origin", "main")
+
+        handler = self.repo.handler()
+        handler.prepare_remote_base()
+        self.assertEqual(handler.ahead_behind(), (0, 0))
+        self.assertEqual((self.repo.work / "remote-change.txt").read_text(encoding="utf-8"), "remote\n")
+
+    def test_remote_preflight_refuses_dirty_and_diverged_checkouts(self):
+        handler = self.repo.handler()
+        (self.repo.work / "notes.txt").write_text("dirty\n", encoding="utf-8")
+        with self.assertRaises(auto_sync.GitContextError):
+            handler.prepare_remote_base()
+        self.repo.git(self.repo.work, "restore", "notes.txt")
+
+        (self.repo.work / "local.txt").write_text("local\n", encoding="utf-8")
+        self.repo.git(self.repo.work, "add", "local.txt")
+        self.repo.git(self.repo.work, "commit", "-m", "local")
+        other = self.temp_root / "other-diverged"
+        self.repo.git(self.temp_root, "clone", "-b", "main", str(self.repo.remote), str(other))
+        self.repo.git(other, "config", "user.name", "Other Writer")
+        self.repo.git(other, "config", "user.email", "other@example.invalid")
+        (other / "remote.txt").write_text("remote\n", encoding="utf-8")
+        self.repo.git(other, "add", "remote.txt")
+        self.repo.git(other, "commit", "-m", "remote")
+        self.repo.git(other, "push", "origin", "main")
+        with self.assertRaises(auto_sync.NonFastForwardError):
+            handler.prepare_remote_base()
+
     def test_branch_and_detached_head_guards_run_before_commit(self):
         handler = self.repo.handler()
         self.repo.git(self.repo.work, "switch", "-c", "feature")
@@ -234,6 +270,13 @@ class AutoSyncGitTests(unittest.TestCase):
             snapshot = handler.wait_for_source_stability()
         writer.join()
         self.assertEqual(snapshot[0][1], len("second and complete"))
+
+    def test_recursive_snapshot_includes_nested_relative_paths(self):
+        nested = self.repo.source / "folder" / "deeper"
+        nested.mkdir(parents=True)
+        (nested / "file.txt").write_text("nested", encoding="utf-8")
+        snapshot = self.repo.handler().source_snapshot()
+        self.assertEqual(snapshot[0][0], "folder/deeper/file.txt")
 
     def test_event_burst_debounces_and_concurrent_pass_reschedules(self):
         handler = self.repo.handler()

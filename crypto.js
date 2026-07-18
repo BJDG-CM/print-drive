@@ -1,6 +1,9 @@
+import { logicalBasename, logicalPathKey, normalizeLogicalPath } from './logical_path.js';
+
 export const MANIFEST_AAD = 'print-drive:manifest:v1';
 export const FORMAT_VERSION = 2;
-export const MANIFEST_SCHEMA = 2;
+export const MANIFEST_SCHEMA = 3;
+export const LEGACY_MANIFEST_SCHEMA = 2;
 export const HKDF_MANIFEST_INFO = 'print-drive:v2:manifest-key';
 export const HKDF_DEK_WRAP_INFO = 'print-drive:v2:dek-wrap-key';
 
@@ -180,7 +183,13 @@ export async function decryptManifest(envelope, keyOrContext) {
 
 export async function fetchAndDecryptFile(file, vaultContext, options = {}) {
     const entry = file.manifestEntry || file;
-    validateFileEntry(entry, vaultContext?.version || 1, vaultContext?.vaultId);
+    validateFileEntry(
+        entry,
+        vaultContext?.version || 1,
+        vaultContext?.vaultId,
+        0,
+        entry.relativePath === undefined ? LEGACY_MANIFEST_SCHEMA : MANIFEST_SCHEMA
+    );
     const encrypted = await fetchEncryptedFile(entry, options.signal);
 
     try {
@@ -340,11 +349,14 @@ export async function encryptBrowserFileV2(descriptor, paddedBytes, vaultContext
 
 export async function encryptManifestV2(envelope, manifest, vaultContext) {
     const objectIndex = createObjectIndex(manifest.files);
+    const schema = manifest.files.every((file) => typeof file.relativePath === 'string')
+        ? MANIFEST_SCHEMA
+        : LEGACY_MANIFEST_SCHEMA;
     const candidateEnvelope = {
         ...envelope,
         objectIndex,
         manifest: {
-            schema: 2,
+            schema,
             id: manifest.id,
             revision: manifest.revision,
             iv: base64UrlEncode(crypto.getRandomValues(new Uint8Array(12))),
@@ -439,7 +451,7 @@ export function validateManifestEnvelope(envelope) {
 
     if (
         !isPlainObject(envelope.manifest) ||
-        envelope.manifest.schema !== 2 ||
+        ![LEGACY_MANIFEST_SCHEMA, MANIFEST_SCHEMA].includes(envelope.manifest.schema) ||
         !HEX_32_RE.test(envelope.manifest.id || '') ||
         !Number.isSafeInteger(envelope.manifest.revision) ||
         envelope.manifest.revision < 1
@@ -478,17 +490,19 @@ export function validateManifestV2(manifest, envelope, options = {}) {
     const logicalIds = new Set();
     const blobIds = new Set();
     const paths = new Set();
-    const normalizedNames = new Set();
+    const normalizedPaths = new Set();
     const dataIvs = new Set();
     const wrapIvs = new Set();
-    let previousName = null;
+    let previousLogicalPath = null;
+    const schema = envelope.manifest.schema;
     for (const file of manifest.files) {
-        validateFileEntry(file, 2, manifest.vaultId, envelope.crypto.padding.blockSize);
+        validateFileEntry(file, 2, manifest.vaultId, envelope.crypto.padding.blockSize, schema);
+        const relativePath = schema === LEGACY_MANIFEST_SCHEMA ? file.name : file.relativePath;
         for (const [set, value, label] of [
             [logicalIds, file.logicalId, 'logicalId'],
             [blobIds, file.blobId, 'blobId'],
             [paths, file.path, 'path'],
-            [normalizedNames, file.name.toLocaleLowerCase('en-US'), '파일명']
+            [normalizedPaths, logicalPathKey(relativePath), '논리 경로']
         ]) {
             if (set.has(value)) {
                 throw schemaError(`중복된 ${label}이 있습니다.`);
@@ -498,12 +512,12 @@ export function validateManifestV2(manifest, envelope, options = {}) {
         if (dataIvs.has(file.dataIv) || wrapIvs.has(file.wrappedDek.iv)) {
             throw schemaError('manifest에 중복된 AES-GCM nonce가 있습니다.');
         }
-        if (previousName !== null && previousName > file.name) {
-            throw schemaError('manifest 파일 목록이 canonical 이름순으로 정렬되지 않았습니다.');
+        if (previousLogicalPath !== null && previousLogicalPath > relativePath) {
+            throw schemaError('manifest 파일 목록이 canonical 상대 경로순으로 정렬되지 않았습니다.');
         }
         dataIvs.add(file.dataIv);
         wrapIvs.add(file.wrappedDek.iv);
-        previousName = file.name;
+        previousLogicalPath = relativePath;
     }
 
     if (!options.skipCiphertext) {
@@ -651,7 +665,7 @@ function validateManifestV1(manifest) {
     return manifest;
 }
 
-function validateFileEntry(file, version, vaultId, blockSize = 0) {
+function validateFileEntry(file, version, vaultId, blockSize = 0, manifestSchema = LEGACY_MANIFEST_SCHEMA) {
     if (!isPlainObject(file)) {
         throw schemaError('manifest 파일 항목 형식이 올바르지 않습니다.');
     }
@@ -677,14 +691,27 @@ function validateFileEntry(file, version, vaultId, blockSize = 0) {
     if (file.vaultId !== undefined && file.vaultId !== vaultId) {
         throw schemaError('파일 vaultId가 현재 vault와 일치하지 않습니다.');
     }
-    assertExactKeys(file, [
+    const keys = [
         'logicalId', 'blobId', 'path', 'name', 'size', 'paddedSize', 'encryptedSize',
         'sha256', 'ciphertextSha256', 'modifiedAt', 'dataIv', 'wrappedDek'
-    ], 'v2 manifest file');
+    ];
+    if (manifestSchema === MANIFEST_SCHEMA) keys.splice(4, 0, 'relativePath');
+    assertExactKeys(file, keys, 'v2 manifest file');
     assertHex(file.logicalId, 32, 'logicalId');
     assertHex(file.blobId, 32, 'blobId');
     if (!V2_PATH_RE.test(file.path) || file.path !== `files/${file.blobId}.bin`) {
         throw schemaError('v2 file path가 올바르지 않습니다.');
+    }
+    if (manifestSchema === MANIFEST_SCHEMA) {
+        let normalizedPath;
+        try {
+            normalizedPath = normalizeLogicalPath(file.relativePath);
+        } catch (error) {
+            throw schemaError(`v3 relativePath가 안전하지 않습니다: ${error.message}`);
+        }
+        if (normalizedPath !== file.relativePath || logicalBasename(normalizedPath) !== file.name) {
+            throw schemaError('v3 relativePath와 name이 일치하지 않습니다.');
+        }
     }
     assertIntegerRange(file.paddedSize, file.size, MAX_FILE_BYTES + MAX_PADDING_BLOCK, 'paddedSize');
     assertIntegerRange(file.encryptedSize, 16, MAX_FILE_BYTES + MAX_PADDING_BLOCK + 16, 'encryptedSize');

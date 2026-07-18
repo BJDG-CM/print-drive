@@ -6,10 +6,12 @@ import {
     pbkdf2Sync,
     randomBytes
 } from 'node:crypto';
+import { logicalBasename, logicalPathKey, normalizeLogicalPath } from './logical_path.js';
 
 export const APP_ID = 'print-drive';
 export const FORMAT_VERSION = 2;
-export const MANIFEST_SCHEMA = 2;
+export const MANIFEST_SCHEMA = 3;
+export const LEGACY_MANIFEST_SCHEMA = 2;
 export const OBJECT_INDEX_VERSION = 1;
 export const DEFAULT_ITERATIONS = 650000;
 export const MIN_ITERATIONS = 200000;
@@ -213,8 +215,11 @@ export function unlockVaultKey(envelope, passphrase) {
 }
 
 export function createEncryptedManifest(manifest, vaultKey, vaultId, options = {}) {
+    const schema = options.schema || (manifest.files?.every((file) => typeof file.relativePath === 'string')
+        ? MANIFEST_SCHEMA
+        : LEGACY_MANIFEST_SCHEMA);
     const descriptor = {
-        schema: MANIFEST_SCHEMA,
+        schema,
         id: options.id || manifest.id || randomHex(16),
         revision: options.revision ?? manifest.revision,
         iv: base64UrlEncode(options.iv || randomBytes(12)),
@@ -426,31 +431,33 @@ export function validateManifestV2(manifest, envelope) {
     const logicalIds = new Set();
     const blobIds = new Set();
     const paths = new Set();
-    const names = new Set();
+    const logicalPaths = new Set();
     const dataIvs = new Set();
     const wrapIvs = new Set();
-    let previousName = null;
+    let previousLogicalPath = null;
+    const schema = envelope?.manifest?.schema || MANIFEST_SCHEMA;
     manifest.files.forEach((file, index) => {
-        validateManifestFile(file, envelope?.crypto?.padding?.blockSize ?? DEFAULT_PADDING_BYTES, index);
-        const normalizedName = canonicalFileNameKey(file.name);
+        validateManifestFile(file, envelope?.crypto?.padding?.blockSize ?? DEFAULT_PADDING_BYTES, index, schema);
+        const relativePath = schema === LEGACY_MANIFEST_SCHEMA ? file.name : file.relativePath;
+        const normalizedPath = logicalPathKey(relativePath);
         if (
             logicalIds.has(file.logicalId) ||
             blobIds.has(file.blobId) ||
             paths.has(file.path) ||
-            names.has(normalizedName) ||
+            logicalPaths.has(normalizedPath) ||
             dataIvs.has(file.dataIv) ||
             wrapIvs.has(file.wrappedDek.iv)
         ) {
             throw new VaultFormatError('Duplicate file identity, name, path, or nonce in manifest.');
         }
-        if (previousName !== null && compareUnicode(previousName, file.name) > 0) {
-            throw new VaultFormatError('manifest.files is not canonically sorted by name.');
+        if (previousLogicalPath !== null && compareUnicode(previousLogicalPath, relativePath) > 0) {
+            throw new VaultFormatError('manifest.files is not canonically sorted by relative path.');
         }
-        previousName = file.name;
+        previousLogicalPath = relativePath;
         logicalIds.add(file.logicalId);
         blobIds.add(file.blobId);
         paths.add(file.path);
-        names.add(normalizedName);
+        logicalPaths.add(normalizedPath);
         dataIvs.add(file.dataIv);
         wrapIvs.add(file.wrappedDek.iv);
     });
@@ -710,7 +717,7 @@ function validateObjectIndex(index) {
 function validateManifestDescriptor(manifest) {
     assertPlainObject(manifest, 'manifest');
     assertExactKeys(manifest, ['schema', 'id', 'revision', 'iv', 'data'], 'manifest');
-    if (manifest.schema !== MANIFEST_SCHEMA) {
+    if (![LEGACY_MANIFEST_SCHEMA, MANIFEST_SCHEMA].includes(manifest.schema)) {
         throw new VaultFormatError('Unsupported manifest schema.');
     }
     validateId(manifest.id, 'manifest.id');
@@ -722,10 +729,10 @@ function validateManifestDescriptor(manifest) {
     }
 }
 
-function validateManifestFile(file, blockSize, index) {
+function validateManifestFile(file, blockSize, index, schema) {
     const label = `manifest.files[${index}]`;
     assertPlainObject(file, label);
-    assertExactKeys(file, [
+    const keys = [
         'logicalId',
         'blobId',
         'path',
@@ -738,13 +745,26 @@ function validateManifestFile(file, blockSize, index) {
         'modifiedAt',
         'dataIv',
         'wrappedDek'
-    ], label);
+    ];
+    if (schema === MANIFEST_SCHEMA) keys.splice(4, 0, 'relativePath');
+    assertExactKeys(file, keys, label);
     validateId(file.logicalId, `${label}.logicalId`);
     validateId(file.blobId, `${label}.blobId`);
     if (file.path !== `files/${file.blobId}.bin`) {
         throw new VaultFormatError(`${label}.path is not derived from blobId.`);
     }
     validateFileName(file.name, `${label}.name`);
+    if (schema === MANIFEST_SCHEMA) {
+        let normalizedPath;
+        try {
+            normalizedPath = normalizeLogicalPath(file.relativePath);
+        } catch (error) {
+            throw new VaultFormatError(`${label}.relativePath is unsafe: ${error.message}`);
+        }
+        if (normalizedPath !== file.relativePath || logicalBasename(normalizedPath) !== file.name) {
+            throw new VaultFormatError(`${label}.relativePath must be NFC canonical and end with name.`);
+        }
+    }
     validateSize(file.size, `${label}.size`, 0);
     validateSize(file.paddedSize, `${label}.paddedSize`, 0);
     validateSize(file.encryptedSize, `${label}.encryptedSize`, 16);

@@ -247,8 +247,6 @@ class SyncHandler(FileSystemEventHandler):
         self.stopping = False
 
     def on_any_event(self, event):
-        if event.is_directory:
-            return
         path_value = Path(event.src_path)
         if self.should_ignore(path_value):
             return
@@ -348,6 +346,7 @@ class SyncHandler(FileSystemEventHandler):
             generation = self.change_generation
 
         if should_encrypt:
+            self.prepare_remote_base()
             self.wait_for_source_stability()
             encrypted = self.encrypt_private_files()
             if encrypted:
@@ -382,12 +381,24 @@ class SyncHandler(FileSystemEventHandler):
     def source_snapshot(self):
         snapshot = []
         unavailable_cloud_files = 0
-        with os.scandir(self.private_dir) as entries:
-            for entry in entries:
-                path_value = Path(entry.path)
-                if self.should_ignore(path_value) or entry.is_symlink() or not entry.is_file(follow_symlinks=False):
+        for directory, directory_names, file_names in os.walk(self.private_dir, followlinks=False):
+            directory_path = Path(directory)
+            retained_directories = []
+            for name in directory_names:
+                path_value = directory_path / name
+                if self.should_ignore(path_value):
                     continue
-                file_stat = entry.stat(follow_symlinks=False)
+                if path_value.is_symlink():
+                    raise SyncError(f"Symbolic links are not allowed in the source workspace: {path_value}")
+                retained_directories.append(name)
+            directory_names[:] = retained_directories
+            for name in file_names:
+                path_value = directory_path / name
+                if self.should_ignore(path_value):
+                    continue
+                if path_value.is_symlink():
+                    raise SyncError(f"Symbolic links are not allowed in the source workspace: {path_value}")
+                file_stat = path_value.stat(follow_symlinks=False)
                 attributes = getattr(file_stat, "st_file_attributes", 0)
                 offline_flags = (
                     getattr(stat, "FILE_ATTRIBUTE_OFFLINE", 0)
@@ -396,7 +407,8 @@ class SyncHandler(FileSystemEventHandler):
                 )
                 if attributes & offline_flags:
                     unavailable_cloud_files += 1
-                snapshot.append((entry.name, file_stat.st_size, file_stat.st_mtime_ns))
+                relative = path_value.relative_to(self.private_dir).as_posix()
+                snapshot.append((relative, file_stat.st_size, file_stat.st_mtime_ns))
         if unavailable_cloud_files:
             raise SyncError(
                 f"{unavailable_cloud_files} OneDrive/cloud file(s) are not fully available locally. "
@@ -478,6 +490,44 @@ class SyncHandler(FileSystemEventHandler):
                 f"Configure it with `git branch --set-upstream-to={expected_upstream} {self.allowed_branch}`."
             )
         self.git_pathspec()
+
+    def prepare_remote_base(self):
+        """Fast-forward a clean, behind-only checkout before any encryption work."""
+        self.validate_git_context()
+        fetch_result = self.run_git([
+            "fetch",
+            "--quiet",
+            "--no-tags",
+            self.remote,
+            f"refs/heads/{self.allowed_branch}:refs/remotes/{self.remote}/{self.allowed_branch}",
+        ], check=False)
+        if fetch_result.returncode != 0:
+            raise PushPendingError(
+                "Could not refresh the remote branch before encryption. No encrypted files were changed. "
+                f"Git detail: {sanitize_git_output(fetch_result.stderr)}"
+            )
+        dirty = self.run_git(["status", "--porcelain=v1"]).stdout.strip()
+        if dirty:
+            raise GitContextError(
+                "The worktree is dirty; refusing to fast-forward or encrypt. Commit, stash, or discard the listed changes first."
+            )
+        ahead, behind = self.ahead_behind()
+        if ahead > 0 and behind > 0:
+            raise NonFastForwardError(
+                "Local and remote branches have diverged. No merge, rebase, encryption, or force push was attempted."
+            )
+        if ahead > 0:
+            raise NonFastForwardError(
+                f"The local branch is {ahead} commit(s) ahead. Push or review those commits before auto-sync encrypts new files."
+            )
+        if behind > 0:
+            result = self.run_git(["merge", "--ff-only", "@{upstream}"], check=False)
+            if result.returncode != 0:
+                raise NonFastForwardError(
+                    "The remote-ahead checkout could not be fast-forwarded safely. No encryption was attempted. "
+                    f"Git detail: {sanitize_git_output(result.stderr)}"
+                )
+            print(f"Fast-forwarded {behind} remote commit(s) before scanning the plaintext source.")
 
     def sync_to_github(self):
         self.validate_git_context()
@@ -657,9 +707,9 @@ def main():
         remote=config["remote"],
     )
     observer = Observer()
-    observer.schedule(event_handler, path=str(private_dir), recursive=False)
+    observer.schedule(event_handler, path=str(private_dir), recursive=True)
 
-    print(f"Watching source directory {display_path(base_dir, private_dir)} (top-level files only).")
+    print(f"Watching source directory {display_path(base_dir, private_dir)} recursively.")
     print(f"Encrypted output commits are restricted to {display_path(base_dir, public_dir)}.")
     observer.start()
     event_handler.request_initial_reconcile()

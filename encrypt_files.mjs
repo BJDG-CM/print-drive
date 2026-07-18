@@ -13,9 +13,11 @@ import {
     realpath,
     rename,
     rm,
+    lstat,
     stat
 } from 'node:fs/promises';
 import path from 'node:path';
+import { logicalBasename, logicalPathKey, normalizeLogicalPath, normalizeLogicalSegment } from './logical_path.js';
 import { pathToFileURL } from 'node:url';
 import { displayPath, getConfiguredPaths } from './paths.mjs';
 import { assertPublicFilesClean, isEncryptedBinName } from './public_files_guard.mjs';
@@ -58,7 +60,7 @@ const DEFAULT_OUTPUT_DIR = 'files';
 const DEFAULT_MANIFEST_NAME = 'manifest.enc';
 const DEFAULT_PASSWORD_FILE = '.print-drive-passphrase';
 const STATE_FILE_NAME = '.print-drive-state.json';
-const STATE_VERSION = 1;
+const STATE_VERSION = 2;
 
 const IGNORED_NAMES = new Set(['.DS_Store', 'Thumbs.db', 'desktop.ini']);
 const IGNORED_PREFIXES = ['.', '~$', '~'];
@@ -101,7 +103,7 @@ export async function main(args = process.argv.slice(2)) {
             await recoverUnreferencedBlobs(outputDir, existing.envelope.objectIndex);
             await syncV2Vault({ existing, sourceDir, outputDir, manifestPath, statePath, options, stats });
         } else if (existing?.kind === 'v1') {
-            await migrateV1Vault({ existing, outputDir, manifestPath, passphrase, options, stats });
+            await migrateV1Vault({ existing, sourceDir, outputDir, manifestPath, statePath, passphrase, options, stats });
         } else {
             await assertNoOrphanBlobs(outputDir);
             await createInitialVault({ sourceDir, outputDir, manifestPath, statePath, passphrase, options, stats });
@@ -168,7 +170,9 @@ async function syncV2Vault({ existing, sourceDir, outputDir, manifestPath, state
         fullScan: options.fullScan,
         stats
     });
-    const plans = planIncrementalUpdate(sourceFiles, manifest.files);
+    const plans = planIncrementalUpdate(sourceFiles, manifest.files, {
+        preserveRemoteOnly: options.preserveRemote
+    });
     const candidatePreview = plans
         .map((plan) => plan.kind === 'reuse' ? plan.file : null)
         .filter(Boolean);
@@ -216,7 +220,7 @@ async function syncV2Vault({ existing, sourceDir, outputDir, manifestPath, state
     console.log(`Updated v2 vault: ${newBlobCount} new blob(s), ${plans.length - newBlobCount} reused.`);
 }
 
-async function migrateV1Vault({ existing, outputDir, manifestPath, passphrase, options, stats }) {
+async function migrateV1Vault({ existing, sourceDir, outputDir, manifestPath, statePath, passphrase, options, stats }) {
     if (!options.migrateV1) {
         throw new Error('A v1 vault was found. Re-run with --migrate-v1 to perform a verified transactional migration.');
     }
@@ -237,6 +241,7 @@ async function migrateV1Vault({ existing, outputDir, manifestPath, passphrase, o
             kind: 'encrypt',
             source: {
                 name,
+                relativePath: name,
                 originalName: file.name,
                 absolutePath: null,
                 bytes,
@@ -255,7 +260,7 @@ async function migrateV1Vault({ existing, outputDir, manifestPath, passphrase, o
     const keySlots = [createPasswordKeySlot(passphrase, vaultKey, vaultId, {
         iterations: options.iterations
     })];
-    await buildAndPublish({
+    const published = await buildAndPublish({
         outputDir,
         manifestPath,
         vaultId,
@@ -271,6 +276,17 @@ async function migrateV1Vault({ existing, outputDir, manifestPath, passphrase, o
     stats.newBlobs = plans.length;
     stats.manifestChanged = true;
     console.log(`Migrated ${plans.length} file(s) from v1 to v2 transactionally.`);
+    const sourceFiles = await readSourceFiles(sourceDir, { fullScan: true, stats });
+    const sourceMatches = sourceFiles.length === published.manifest.files.length && sourceFiles.every((source) => {
+        const file = published.manifest.files.find((candidate) => candidate.relativePath === source.relativePath);
+        return file && file.size === source.size && file.sha256 === source.sha256;
+    });
+    if (sourceMatches) {
+        await writeSourceState(statePath, sourceDir, sourceFiles, published.envelope, published.manifest, { fullAudit: true });
+        console.log('The configured plaintext source was verified and connected to the migrated v2 vault.');
+    } else {
+        console.warn('The cryptographic migration completed, but the plaintext source differs; run npm run source:relink.');
+    }
 }
 
 async function buildAndPublish({
@@ -329,7 +345,7 @@ async function buildAndPublish({
                 if (disposable) source.bytes.fill(0);
             }
         }
-        files.sort((left, right) => compareUnicode(left.name, right.name));
+        files.sort((left, right) => compareUnicode(fileRelativePath(left), fileRelativePath(right)));
 
         const now = new Date().toISOString();
         const manifestBase = {
@@ -428,6 +444,7 @@ function createEncryptedFile({
         blobId,
         path: `files/${blobId}.bin`,
         name: source.name,
+        relativePath: source.relativePath,
         size: source.size,
         paddedSize: padded.byteLength,
         encryptedSize: padded.byteLength + 16,
@@ -449,21 +466,30 @@ function createEncryptedFile({
     return { file, encrypted };
 }
 
-function planIncrementalUpdate(sourceFiles, oldFiles) {
-    const oldByName = new Map(oldFiles.map((file) => [file.name, file]));
+export function planIncrementalUpdate(sourceFiles, oldFiles, options = {}) {
+    const oldByPath = new Map(oldFiles.map((file) => [fileRelativePath(file), file]));
     const matchedOldIds = new Set();
     const plans = [];
     const unmatchedSources = [];
 
     for (const source of sourceFiles) {
-        const old = oldByName.get(source.name);
+        const old = oldByPath.get(source.relativePath);
         if (!old) {
             unmatchedSources.push(source);
             continue;
         }
         matchedOldIds.add(old.logicalId);
         if (old.size === source.size && old.sha256 === source.sha256) {
-            plans.push({ kind: 'reuse', file: old, metadataChanged: false });
+            const upgraded = {
+                ...old,
+                relativePath: source.relativePath,
+                name: source.name
+            };
+            plans.push({
+                kind: 'reuse',
+                file: upgraded,
+                metadataChanged: old.relativePath !== source.relativePath || old.name !== source.name
+            });
         } else {
             plans.push({ kind: 'encrypt', source, logicalId: old.logicalId });
         }
@@ -483,6 +509,7 @@ function planIncrementalUpdate(sourceFiles, oldFiles) {
                 metadataChanged: true,
                 file: {
                     ...old,
+                    relativePath: source.relativePath,
                     name: source.name,
                     modifiedAt: source.modifiedAt
                 }
@@ -492,38 +519,68 @@ function planIncrementalUpdate(sourceFiles, oldFiles) {
             plans.push({ kind: 'encrypt', source, logicalId: randomHex(16) });
         }
     }
+    if (options.preserveRemoteOnly) {
+        for (const old of oldFiles) {
+            if (!matchedOldIds.has(old.logicalId)) {
+                plans.push({
+                    kind: 'reuse',
+                    metadataChanged: old.relativePath === undefined,
+                    file: {
+                        ...old,
+                        relativePath: fileRelativePath(old)
+                    }
+                });
+            }
+        }
+    }
     plans.sort((left, right) => compareUnicode(
-        left.kind === 'reuse' ? left.file.name : left.source.name,
-        right.kind === 'reuse' ? right.file.name : right.source.name
+        left.kind === 'reuse' ? left.file.relativePath : left.source.relativePath,
+        right.kind === 'reuse' ? right.file.relativePath : right.source.relativePath
     ));
     return plans;
 }
 
-async function readSourceFiles(sourceDir, options = {}) {
-    const entries = await readdir(sourceDir, { withFileTypes: true });
+export async function readSourceFiles(sourceDir, options = {}) {
     const files = [];
-    const canonicalNames = new Set();
-    const cachedByName = new Map((options.state?.files || []).map((file) => [file.name, file]));
-    const manifestByName = new Map((options.manifest?.files || []).map((file) => [file.name, file]));
-    for (const entry of entries) {
-        if (!entry.isFile() || shouldIgnore(entry.name)) {
-            continue;
-        }
-        const name = entry.name.normalize('NFC');
-        const nameKey = canonicalFileNameKey(name);
-        if (canonicalNames.has(nameKey)) {
-            throw new Error(`Duplicate filename after NFC normalization: ${name}`);
-        }
-        canonicalNames.add(nameKey);
-        const absolutePath = path.join(sourceDir, entry.name);
-        const before = await stat(absolutePath, { bigint: true });
+    const canonicalPaths = new Set();
+    const cachedByPath = new Map((options.state?.files || []).map((file) => [file.relativePath, file]));
+    const manifestByPath = new Map((options.manifest?.files || []).map((file) => [fileRelativePath(file), file]));
+
+    async function walk(directory, parentSegments = []) {
+        const entries = (await readdir(directory, { withFileTypes: true }))
+            .sort((left, right) => compareUnicode(left.name.normalize('NFC'), right.name.normalize('NFC')));
+        for (const entry of entries) {
+            if (shouldIgnore(entry.name)) continue;
+            const absolutePath = path.join(directory, entry.name);
+            if (entry.isSymbolicLink()) {
+                throw new Error(`Symbolic links are not allowed in the source workspace: ${absolutePath}`);
+            }
+            const segment = normalizeLogicalSegment(entry.name);
+            const segments = [...parentSegments, segment];
+            if (entry.isDirectory()) {
+                await walk(absolutePath, segments);
+                continue;
+            }
+            if (!entry.isFile()) {
+                throw new Error(`Unsupported source entry type: ${absolutePath}`);
+            }
+            const relativePath = normalizeLogicalPath(segments.join('/'));
+            const pathKey = logicalPathKey(relativePath);
+            if (canonicalPaths.has(pathKey)) {
+                throw new Error(`Duplicate path after case-insensitive NFC normalization: ${relativePath}`);
+            }
+            canonicalPaths.add(pathKey);
+            const before = await lstat(absolutePath, { bigint: true });
+            if (!before.isFile() || before.isSymbolicLink()) {
+                throw new Error(`Source entry is not a regular non-symlink file: ${relativePath}`);
+            }
         const size = Number(before.size);
         if (size > MAX_FILE_BYTES) {
-            throw new Error(`Source file exceeds the 512 MiB v2 limit: ${entry.name}`);
+                throw new Error(`Source file exceeds the 512 MiB v2 limit: ${relativePath}`);
         }
         const metadata = sourceMetadata(before);
-        const cached = cachedByName.get(name);
-        const manifestFile = manifestByName.get(name);
+            const cached = cachedByPath.get(relativePath);
+            const manifestFile = manifestByPath.get(relativePath);
         const canReuse = !options.fullScan
             && cached
             && manifestFile
@@ -536,9 +593,10 @@ async function readSourceFiles(sourceDir, options = {}) {
             && manifestFile.size === size;
         const hashed = canReuse
             ? { after: before, sha256: cached.sha256 }
-            : await hashStableSourceFile(absolutePath, before, entry.name, options.stats);
+                : await hashStableSourceFile(absolutePath, before, relativePath, options.stats);
         files.push({
-            name,
+                name: logicalBasename(relativePath),
+                relativePath,
             originalName: entry.name,
             absolutePath,
             size: Number(hashed.after.size),
@@ -548,8 +606,10 @@ async function readSourceFiles(sourceDir, options = {}) {
             fileId: fileIdentity(hashed.after),
             modifiedAt: new Date(Number(hashed.after.mtimeMs)).toISOString()
         });
+        }
     }
-    files.sort((left, right) => compareUnicode(left.name, right.name));
+    await walk(sourceDir);
+    files.sort((left, right) => compareUnicode(left.relativePath, right.relativePath));
     if (files.length > MAX_MANIFEST_FILES) {
         throw new Error(`Source contains more than ${MAX_MANIFEST_FILES} supported files.`);
     }
@@ -557,6 +617,9 @@ async function readSourceFiles(sourceDir, options = {}) {
 }
 
 export async function hashStableSourceFile(absolutePath, before, displayName, stats) {
+    if (!before.isFile() || before.isSymbolicLink()) {
+        throw new Error(`Source entry is not a regular non-symlink file: ${displayName}`);
+    }
     const handle = await open(absolutePath, 'r');
     const hash = createHash('sha256');
     const chunk = Buffer.allocUnsafe(1024 * 1024);
@@ -572,7 +635,7 @@ export async function hashStableSourceFile(absolutePath, before, displayName, st
         chunk.fill(0);
         await handle.close();
     }
-    const after = await stat(absolutePath, { bigint: true });
+    const after = await lstat(absolutePath, { bigint: true });
     if (before.size !== after.size || before.mtimeNs !== after.mtimeNs || fileIdentity(before) !== fileIdentity(after) || BigInt(totalBytes) !== after.size) {
         throw new Error(`Source file changed while it was being hashed: ${displayName}`);
     }
@@ -585,13 +648,16 @@ export async function hashStableSourceFile(absolutePath, before, displayName, st
 
 async function materializeSource(source, stats) {
     if (source.bytes) return { source, disposable: false };
-    const before = await stat(source.absolutePath, { bigint: true });
+    const before = await lstat(source.absolutePath, { bigint: true });
+    if (!before.isFile() || before.isSymbolicLink()) {
+        throw new Error(`Source file is no longer a regular non-symlink file: ${source.relativePath}`);
+    }
     if (Number(before.size) !== source.size || before.mtimeNs.toString() !== source.mtimeNs || fileIdentity(before) !== source.fileId) {
         throw new Error(`Source file changed before encryption: ${source.originalName}`);
     }
     const bytes = await readFile(source.absolutePath);
     if (stats) stats.sourceBytesRead += bytes.byteLength;
-    const after = await stat(source.absolutePath, { bigint: true });
+    const after = await lstat(source.absolutePath, { bigint: true });
     if (
         before.size !== after.size ||
         before.mtimeNs !== after.mtimeNs ||
@@ -669,9 +735,9 @@ async function loadSourceState(statePath, sourceDir, envelope, manifest) {
             console.warn('Local source state does not match the current vault; performing a safe full scan.');
             return null;
         }
-        const manifestByName = new Map(manifest.files.map((file) => [file.name, file]));
-        if (value.files.length !== manifest.files.length || value.files.some((cached) => {
-            const file = manifestByName.get(cached.name);
+        const manifestByPath = new Map(manifest.files.map((file) => [fileRelativePath(file), file]));
+        if (value.files.some((cached) => {
+            const file = manifestByPath.get(cached.relativePath);
             return !file
                 || cached.size !== file.size
                 || cached.sha256 !== file.sha256
@@ -688,15 +754,15 @@ async function loadSourceState(statePath, sourceDir, envelope, manifest) {
     }
 }
 
-async function writeSourceState(statePath, sourceDir, sourceFiles, envelope, manifest, options = {}) {
-    const manifestByName = new Map(manifest.files.map((file) => [file.name, file]));
+export async function writeSourceState(statePath, sourceDir, sourceFiles, envelope, manifest, options = {}) {
+    const manifestByPath = new Map(manifest.files.map((file) => [fileRelativePath(file), file]));
     const files = sourceFiles.map((source) => {
-        const file = manifestByName.get(source.name);
+        const file = manifestByPath.get(source.relativePath);
         if (!file || file.size !== source.size || file.sha256 !== source.sha256) {
-            throw new Error(`Cannot cache source state because manifest mapping is missing: ${source.name}`);
+            throw new Error(`Cannot cache source state because manifest mapping is missing: ${source.relativePath}`);
         }
         return {
-            name: source.name,
+            relativePath: source.relativePath,
             size: source.size,
             mtimeNs: source.mtimeNs,
             fileId: source.fileId,
@@ -704,7 +770,7 @@ async function writeSourceState(statePath, sourceDir, sourceFiles, envelope, man
             logicalId: file.logicalId,
             blobId: file.blobId
         };
-    }).sort((left, right) => compareUnicode(left.name, right.name));
+    }).sort((left, right) => compareUnicode(left.relativePath, right.relativePath));
     const value = {
         version: STATE_VERSION,
         sourceId: await sourceDirectoryId(sourceDir),
@@ -739,21 +805,20 @@ function validateSourceState(value) {
         throw new Error('invalid lastFullAuditAt');
     }
     if (!Array.isArray(value.files) || value.files.length > MAX_MANIFEST_FILES) throw new Error('invalid state files');
-    let previousName = null;
-    const names = new Set();
+    let previousPath = null;
+    const paths = new Set();
     for (const [index, file] of value.files.entries()) {
-        assertStateObject(file, ['name', 'size', 'mtimeNs', 'fileId', 'sha256', 'logicalId', 'blobId'], `state.files[${index}]`);
-        if (typeof file.name !== 'string' || !file.name || file.name !== file.name.normalize('NFC') || /[\\/\u0000\r\n]/.test(file.name)) {
-            throw new Error('invalid cached filename');
-        }
-        const nameKey = canonicalFileNameKey(file.name);
-        if (names.has(nameKey) || (previousName !== null && compareUnicode(previousName, file.name) > 0)) throw new Error('duplicate or unsorted cached filename');
+        assertStateObject(file, ['relativePath', 'size', 'mtimeNs', 'fileId', 'sha256', 'logicalId', 'blobId'], `state.files[${index}]`);
+        const normalizedPath = normalizeLogicalPath(file.relativePath);
+        if (normalizedPath !== file.relativePath) throw new Error('invalid cached relative path');
+        const pathKey = logicalPathKey(file.relativePath);
+        if (paths.has(pathKey) || (previousPath !== null && compareUnicode(previousPath, file.relativePath) > 0)) throw new Error('duplicate or unsorted cached relative path');
         if (!Number.isSafeInteger(file.size) || file.size < 0 || file.size > MAX_FILE_BYTES) throw new Error('invalid cached size');
         if (!/^[0-9]+$/.test(file.mtimeNs || '')) throw new Error('invalid cached mtime');
         if (file.fileId !== null && (typeof file.fileId !== 'string' || !/^[0-9]+:[0-9]+$/.test(file.fileId))) throw new Error('invalid cached file identity');
         if (!/^[0-9a-f]{64}$/.test(file.sha256 || '') || !/^[0-9a-f]{32}$/.test(file.logicalId || '') || !/^[0-9a-f]{32}$/.test(file.blobId || '')) throw new Error('invalid cached hash or identity');
-        names.add(nameKey);
-        previousName = file.name;
+        paths.add(pathKey);
+        previousPath = file.relativePath;
     }
     return value;
 }
@@ -952,6 +1017,10 @@ function fileFingerprint(file) {
     return `${file.size}:${file.sha256}`;
 }
 
+export function fileRelativePath(file) {
+    return file.relativePath || file.name;
+}
+
 function shouldIgnore(name) {
     const lowerName = name.toLowerCase();
     return (
@@ -995,6 +1064,7 @@ function parseArgs(args) {
         migrateV1: false,
         fullScan: false,
         verifyAll: false,
+        preserveRemote: false,
         iterations: DEFAULT_ITERATIONS,
         iterationsExplicit: false,
         paddingBytes: DEFAULT_PADDING_BYTES,
@@ -1020,6 +1090,8 @@ function parseArgs(args) {
             options.fullScan = true;
         } else if (arg === '--verify-all') {
             options.verifyAll = true;
+        } else if (arg === '--preserve-remote') {
+            options.preserveRemote = true;
         } else if (arg === '--iterations') {
             options.iterations = Number(requireValue(args, ++index, arg));
             options.iterationsExplicit = true;
@@ -1080,6 +1152,7 @@ Options:
   --migrate-v1            Explicitly migrate a verified v1 vault to v2.
   --full-scan             Hash every source file and rebuild local source state.
   --verify-all            Decrypt and authenticate every referenced encrypted object.
+  --preserve-remote       Preserve remote-only logical files (used by safe relink add/replace).
   --iterations <number>   PBKDF2-SHA256 count for a new vault or migration. Default: ${DEFAULT_ITERATIONS}
   --padding-bytes <num>   0 or a power-of-two padding block. Default: ${DEFAULT_PADDING_BYTES}
 
