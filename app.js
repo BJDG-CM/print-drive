@@ -8,17 +8,14 @@ import {
     isTextPreviewableFile
 } from './file_types.js';
 import {
-    MANIFEST_AAD,
     PrintDriveCryptoError,
     base64ToBytes,
     bytesToBase64,
     bytesToHex,
     createVaultContextFromRaw,
-    createFileAad,
     decryptSharedFile,
     decryptManifest,
     encryptBrowserFileV2,
-    encryptBytes,
     encryptManifestV2,
     fetchAndDecryptFile,
     readResponseBytesBounded,
@@ -2101,12 +2098,16 @@ async function handleUploadFiles(fileList) {
 
 async function createEncryptedUpdateEntries(uploadFiles, context) {
     const { operation, vaultContext, envelope, manifest, files } = context;
+    if (vaultContext.version !== 2 || envelope.version !== 2) {
+        throw new Error('현재 파일 저장소를 업데이트한 뒤 패키지를 만들어 주세요.');
+    }
     const replacementNames = new Set(uploadFiles.map((file) => normalizedNameKey(file.name)));
     const existingByName = new Map(files.map((file) => [normalizedNameKey(file.name), file]));
     const manifestFiles = files
         .filter((file) => !replacementNames.has(normalizedNameKey(file.name)))
         .map((file) => toManifestEntry(file, vaultContext.version));
     const zipEntries = [];
+    const addObjects = [];
     const paddingBlockSize = getPaddingBlockSize(envelope);
     const sensitiveBuffers = [];
 
@@ -2131,97 +2132,87 @@ async function createEncryptedUpdateEntries(uploadFiles, context) {
         assertTrustedOperationCurrent(operation);
         const modifiedAt = new Date(uploadFile.lastModified || Date.now()).toISOString();
 
-        if (vaultContext.version === 2) {
-            const previous = existingByName.get(normalizedNameKey(normalizedName));
-            const logicalId = previous?.logicalId || createRandomHex(16);
-            const blobId = createRandomHex(16);
-            const descriptor = {
-                vaultId: vaultContext.vaultId,
-                logicalId,
-                blobId,
-                name: normalizedName,
-                size: fileBytes.byteLength,
-                paddedSize: paddedBytes.byteLength,
-                sha256
-            };
-            const encrypted = await encryptBrowserFileV2(descriptor, paddedBytes, vaultContext);
-            assertTrustedOperationCurrent(operation);
-            const path = `files/${blobId}.bin`;
-            zipEntries.push({ name: path, bytes: encrypted.encryptedBytes });
-            manifestFiles.push({
-                logicalId,
-                blobId,
-                path,
-                name: normalizedName,
-                size: fileBytes.byteLength,
-                paddedSize: paddedBytes.byteLength,
-                encryptedSize: encrypted.encryptedBytes.byteLength,
-                sha256,
-                ciphertextSha256: encrypted.ciphertextSha256,
-                modifiedAt,
-                dataIv: encrypted.dataIv,
-                wrappedDek: encrypted.wrappedDek
-            });
-        } else {
-            const id = createRandomHex(16);
-            const iv = createRandomBytes(12);
-            const encryptedBytes = await encryptBytes(paddedBytes, vaultContext.key, iv, createFileAad(id));
-            assertTrustedOperationCurrent(operation);
-            const extension = getExtension(normalizedName);
-            const outputName = `${id}.bin`;
-            zipEntries.push({ name: `files/${outputName}`, bytes: encryptedBytes });
-            manifestFiles.push({
-                id,
-                name: normalizedName,
-                size: fileBytes.byteLength,
-                encryptedSize: encryptedBytes.byteLength,
-                extension,
-                type: getFileType(extension),
-                mime: getMimeType(extension),
-                path: `files/${outputName}`,
-                modifiedAt,
-                iv: bytesToBase64(iv),
-                sha256
-            });
+        const previous = existingByName.get(normalizedNameKey(normalizedName));
+        if (previous && previous.size === fileBytes.byteLength && previous.sha256 === sha256) {
+            manifestFiles.push(toManifestEntry(previous, 2));
+            continue;
         }
+
+        const logicalId = previous?.logicalId || createRandomHex(16);
+        const blobId = createRandomHex(16);
+        const descriptor = {
+            vaultId: vaultContext.vaultId,
+            logicalId,
+            blobId,
+            name: normalizedName,
+            size: fileBytes.byteLength,
+            paddedSize: paddedBytes.byteLength,
+            sha256
+        };
+        const encrypted = await encryptBrowserFileV2(descriptor, paddedBytes, vaultContext);
+        assertTrustedOperationCurrent(operation);
+        const path = `files/${blobId}.bin`;
+        const object = {
+            blobId,
+            path,
+            encryptedSize: encrypted.encryptedBytes.byteLength,
+            ciphertextSha256: encrypted.ciphertextSha256
+        };
+        addObjects.push(object);
+        zipEntries.push({ name: path, bytes: encrypted.encryptedBytes });
+        manifestFiles.push({
+            logicalId,
+            blobId,
+            path,
+            name: normalizedName,
+            size: fileBytes.byteLength,
+            paddedSize: paddedBytes.byteLength,
+            encryptedSize: encrypted.encryptedBytes.byteLength,
+            sha256,
+            ciphertextSha256: encrypted.ciphertextSha256,
+            modifiedAt,
+            dataIv: encrypted.dataIv,
+            wrappedDek: encrypted.wrappedDek
+        });
       }
 
-    manifestFiles.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-    let updatedEnvelope;
-    if (vaultContext.version === 2) {
-        const updatedManifest = {
-            ...manifest,
-            revision: manifest.revision + 1,
-            updatedAt: new Date().toISOString(),
-            files: manifestFiles
-        };
-        updatedEnvelope = await encryptManifestV2(envelope, updatedManifest, vaultContext);
-        assertTrustedOperationCurrent(operation);
-    } else {
-        const updatedManifest = {
-            version: 1,
-            createdAt: new Date().toISOString(),
-            files: manifestFiles
-        };
-        const manifestIv = createRandomBytes(12);
-        const encryptedManifest = await encryptBytes(
-            appTextEncoder.encode(JSON.stringify(updatedManifest)),
-            vaultContext.key,
-            manifestIv,
-            MANIFEST_AAD
-        );
-        updatedEnvelope = {
-            ...envelope,
-            manifest: {
-                iv: bytesToBase64(manifestIv),
-                data: bytesToBase64(encryptedManifest)
-            }
-        };
+    if (addObjects.length === 0) {
+        throw new Error('선택한 파일은 현재 파일과 내용이 같습니다.');
     }
+    manifestFiles.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    const updatedManifest = {
+        ...manifest,
+        revision: manifest.revision + 1,
+        updatedAt: new Date().toISOString(),
+        files: manifestFiles
+    };
+    const updatedEnvelope = await encryptManifestV2(envelope, updatedManifest, vaultContext);
+    assertTrustedOperationCurrent(operation);
+
+    addObjects.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+    const targetBlobIds = new Set(updatedEnvelope.objectIndex.objects.map((object) => object.blobId));
+    const removeObjects = envelope.objectIndex.objects
+        .map((object) => object.blobId)
+        .filter((blobId) => !targetBlobIds.has(blobId))
+        .sort();
+    const updateMetadata = {
+        version: 1,
+        app: 'print-drive',
+        vaultId: envelope.vaultId,
+        baseRevision: manifest.revision,
+        targetRevision: updatedManifest.revision,
+        addObjects,
+        removeObjects,
+        manifestPath: MANIFEST_URL
+    };
 
     zipEntries.unshift({
         name: MANIFEST_URL,
         bytes: appTextEncoder.encode(`${JSON.stringify(updatedEnvelope, null, 2)}\n`)
+    });
+    zipEntries.unshift({
+        name: 'print-drive-update.json',
+        bytes: appTextEncoder.encode(`${JSON.stringify(updateMetadata, null, 2)}\n`)
     });
 
     assertTrustedOperationCurrent(operation);

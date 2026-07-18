@@ -13,6 +13,8 @@
     "sync:dry-run": "node scripts/config_cli.mjs dry-run",
     "design:fixture": "node scripts/create_design_fixture.mjs",
     "benchmark": "node scripts/benchmark_v2.mjs --full",
-    "benchmark:quick": "node scripts/benchmark_v2.mjs"
+    "benchmark:quick": "node scripts/benchmark_v2.mjs",
+    "update:check": "node scripts/apply_update.mjs --dry-run",
+    "update:apply": "node scripts/apply_update.mjs --apply"
   }
 }
