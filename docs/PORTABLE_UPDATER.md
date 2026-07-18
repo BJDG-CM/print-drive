@@ -2,22 +2,32 @@
 
 `PrintDrive-Portable-windows-x64.zip`은 Windows 10/11 x64에서 설치된 Node.js, Git, Python 없이 실행되는 관리자용 패키지다. `Workspace`의 평문을 로컬에서 암호화하고 GitHub에는 `files/manifest.enc`와 `files/<blob-id>.bin`만 전송한다. 평문, vault 비밀번호, GitHub token은 저장소나 설정 파일에 기록하지 않는다.
 
-## 저장소 관리자 최초 설정
+## 가장 빠른 사용 방법
+
+1. [Windows용 ZIP](https://github.com/BJDG-CM/print-drive/releases/latest/download/PrintDrive-Portable-windows-x64.zip)과 [SHA-256 파일](https://github.com/BJDG-CM/print-drive/releases/latest/download/PrintDrive-Portable-windows-x64.zip.sha256)을 같은 폴더에 받는다.
+2. PowerShell에서 `Get-FileHash .\PrintDrive-Portable-windows-x64.zip -Algorithm SHA256` 결과가 sidecar의 값과 같은지 확인한다.
+3. ZIP을 풀고 `PrintDrive-Portable.exe`를 실행한다. Windows x64용이며 코드 서명이 없으므로 조직 정책이나 SmartScreen이 경고할 수 있다.
+4. 기본 `Workspace`를 열어 평문을 넣거나 **다른 폴더 선택**으로 기존 원본 폴더를 지정한다. 선택 경로는 저장하지 않는다.
+5. Fine-grained token을 검증하고 vault 비밀번호를 입력해 계획을 만든 뒤, 기준 commit·변경 수·암호화 업로드 크기를 확인하고 적용한다.
+
+Fine-grained token은 `Only select repositories → BJDG-CM/print-drive`, `Contents: Read and write`, `Metadata: Read`로 제한한다. 브랜치 보호 fallback PR까지 만들려면 `Pull requests: Read and write`도 필요하다. token과 비밀번호는 설정·URL·로그에 기록하지 않고 프로세스 메모리에서만 사용한다.
+
+## 선택 사항: 저장소 관리자 Device Flow 설정
 
 1. GitHub App을 만들고 **Device Flow**를 활성화한다. App을 대상 저장소에 설치하고 repository permissions를 `Contents: Read and write`, `Pull requests: Read and write`, 그 밖의 권한은 최소로 둔다.
 2. 공개 값인 App client ID를 `print-drive.workspace.json`의 `oauthClientId`에 넣는다. client secret, token, 비밀번호는 이 파일에 넣지 않는다.
 3. `owner`, `repo`, `branch`, `expectedVaultId`, `pagesUrl`을 실제 배포와 대조한다. `encryptedOutputPath`는 `files`로 유지한다.
 4. Actions에서 `Build portable updater`를 수동 실행하거나 `portable-v*` tag를 push한다. 산출 ZIP과 `.sha256`을 함께 배포한다.
-5. 조직 정책이 Device Flow 또는 GitHub App 설치를 막으면 fine-grained personal access token을 사용자가 UI에 직접 입력한다. 이 token에는 대상 저장소의 `Contents: Read and write`와, fallback PR이 필요하면 `Pull requests: Read and write`만 부여한다.
+5. `oauthClientId`가 비어 있어도 fine-grained token 경로로 모든 기본 작업을 수행할 수 있다. Device Flow는 선택 사항이다.
 
 OAuth App도 Device Flow를 지원하지만, 저장소가 명확히 한정되는 GitHub App을 권장한다. client ID는 공개 식별자이며 client secret은 패키지에 포함하지 않는다.
 
 ## 사용자 절차
 
-1. ZIP을 원하는 폴더에 풀고 `Workspace`에 추가·교체할 파일과 하위 폴더를 넣는다.
-2. `PrintDriveUpdater.exe`를 실행한다. 업데이터는 임의 포트의 `127.0.0.1`에만 바인딩하고 256-bit 일회 세션 URL을 기본 브라우저로 연다.
+1. ZIP을 원하는 폴더에 풀고 `Workspace`에 추가·교체할 파일과 하위 폴더를 넣거나 다른 원본 폴더를 선택한다.
+2. `PrintDrive-Portable.exe`를 실행한다. 업데이터는 임의 포트의 `127.0.0.1`에만 바인딩하고 256-bit 일회 세션 URL을 기본 브라우저로 연다.
 3. vault 비밀번호와 모드를 선택하고 미리보기를 만든다. 기본 `추가/교체`는 원격 전용 파일을 보존한다. `선택 삭제`는 명시한 상대 경로만 지운다. `mirror`는 Workspace와 원격을 같게 만들며 빈 Workspace에서는 두 번째 확인이 필요하다.
-4. Device Flow로 로그인한 뒤 추가·교체·이동·삭제 계획과 기준 commit SHA를 확인하고 적용한다.
+4. Fine-grained token(기본) 또는 설정된 Device Flow로 로그인한 뒤 추가·교체·이동·삭제·변경 없음 계획과 기준 commit SHA를 확인하고 적용한다.
 5. 업데이터는 적용 직전 branch ref를 다시 읽는다. 기준 SHA가 달라졌으면 원격을 바꾸지 않고 새 미리보기를 요구한다.
 
 ## 원격 적용과 복구
@@ -47,3 +57,7 @@ npm run portable:test
 - Content Security Policy와 `no-store`를 적용한다. 오류에서 GitHub token 형식을 마스킹한다.
 - 실행 중인 프로세스, 브라우저, OS, 보안 제품이 메모리를 검사하는 위험까지 제거하지는 못한다. 신뢰할 수 있는 관리자 PC에서만 사용하고 완료 뒤 브라우저와 실행 파일을 닫는다.
 - 패키지 서명은 현재 자동화하지 않는다. 배포 전 `.sha256`을 별도 신뢰 채널로 확인하고, 조직이 요구하면 Authenticode 서명을 추가한다.
+
+## 기존 원본 폴더 복구
+
+저장소 clone에서 `Repair-PrintDrive.cmd`를 실행한다. 런처는 Git·Node.js·Python을 확인하고 `origin/main`과의 ahead/behind/diverged 상태를 검사하며, 안전한 fast-forward만 허용한다. 선택한 폴더에 대해 먼저 dry-run 분류를 출력한 뒤 `adopt`, `add-replace`, `mirror` 중 사용자가 고르게 한다. `mirror`는 자동 선택되지 않으며 원격 전용 삭제 목록을 검토하고 `DELETE_REMOTE_ONLY`를 정확히 입력해야만 실행된다. 마지막 `npm run verify`가 실패하면 push하지 않는다.

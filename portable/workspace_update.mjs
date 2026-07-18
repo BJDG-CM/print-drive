@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { main as encryptMain, readSourceFiles } from '../encrypt_files.mjs';
@@ -74,12 +75,18 @@ export async function buildWorkspaceUpdate({ snapshot, workspaceDirectory, passp
                 files.set(`${snapshot.prefix}/${name}`, bytes);
             }
         }
+        const manifestBytes = files.get(`${snapshot.prefix}/manifest.enc`);
+        const targetObjectPath = [...files.keys()].find((filePath) => filePath !== `${snapshot.prefix}/manifest.enc`) || null;
         return {
             baseSha: snapshot.baseSha,
             baseTreeSha: snapshot.baseTreeSha,
             baseEncryptedPaths: new Set(snapshot.files.keys()),
             files,
             plan,
+            changeCount: plan.additions.length + plan.replacements.length + plan.removals.length + plan.moves.length,
+            uploadBytes: [...files.values()].reduce((total, bytes) => total + bytes.byteLength, 0),
+            manifestSha256: createHash('sha256').update(manifestBytes).digest('hex'),
+            targetObjectPath,
             message: 'Update encrypted Print Drive vault'
         };
     } finally {
@@ -131,12 +138,14 @@ function createLogicalPlan(beforeFiles, afterFiles) {
     const replacements = [];
     const removals = [];
     const moves = [];
+    const unchanged = [];
     const unmatchedBefore = [];
     const unmatchedAfter = [];
     for (const [filePath, file] of afterByPath) {
         const before = beforeByPath.get(filePath);
         if (!before) unmatchedAfter.push(file);
         else if (before.sha256 !== file.sha256 || before.size !== file.size) replacements.push(filePath);
+        else unchanged.push(filePath);
     }
     for (const [filePath, file] of beforeByPath) if (!afterByPath.has(filePath)) unmatchedBefore.push(file);
     for (const after of unmatchedAfter) {
@@ -147,7 +156,7 @@ function createLogicalPlan(beforeFiles, afterFiles) {
         } else additions.push(logicalPath(after));
     }
     removals.push(...unmatchedBefore.map(logicalPath));
-    return { additions, replacements, removals, moves };
+    return { additions, replacements, removals, moves, unchanged };
 }
 
 function logicalPath(file) { return file.relativePath || file.name; }

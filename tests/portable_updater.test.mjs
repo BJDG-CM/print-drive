@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { webcrypto } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
@@ -17,7 +18,7 @@ import {
 } from '../portable/remote_updater.mjs';
 import { validateWorkspaceConfig } from '../portable/main.mjs';
 import { buildWorkspaceUpdate } from '../portable/workspace_update.mjs';
-import { decryptManifestV2, parseEnvelopeText, unlockVaultKey } from '../vault_format.mjs';
+import { createEncryptedManifest, createObjectIndex, decryptManifestV2, parseEnvelopeText, serializeEnvelope, unlockVaultKey } from '../vault_format.mjs';
 
 const BASE = '1'.repeat(40);
 const TREE = '2'.repeat(40);
@@ -172,6 +173,81 @@ test('portable workspace update preserves remote-only files and encrypts nested 
             assert.deepEqual(manifest.files.map((file) => file.relativePath).sort(), ['remote-only.txt', '폴더/추가.txt']);
         } finally {
             vaultKey.fill(0);
+        }
+    } finally {
+        await rm(fixture, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+});
+
+test('portable nested-folder update operationally migrates schema 2 to 3 and remains browser-readable', async () => {
+    const fixture = await mkdtemp(path.join(ROOT, '.tmp', 'portable-schema-migration-'));
+    const originalSource = path.join(fixture, 'original');
+    const output = path.join(fixture, 'files');
+    const workspace = path.join(fixture, 'Workspace');
+    const passwordFile = path.join(fixture, 'passphrase');
+    const passphrase = 'portable-schema-two-to-three-passphrase';
+    await Promise.all([mkdir(originalSource), mkdir(output), mkdir(workspace)]);
+    try {
+        await writeFile(path.join(originalSource, 'root.txt'), 'schema 2 root remains\n');
+        await writeFile(passwordFile, `${passphrase}\n`);
+        await encryptMain(['--source', originalSource, '--out', output, '--password-file', passwordFile, '--iterations', '200000', '--padding-bytes', '0']);
+        const currentEnvelope = parseEnvelopeText(await readFile(path.join(output, 'manifest.enc'), 'utf8'));
+        const unlocked = unlockVaultKey(currentEnvelope, passphrase);
+        try {
+            const currentManifest = decryptManifestV2(currentEnvelope, unlocked.vaultKey);
+            const legacyFiles = currentManifest.files.map(({ relativePath: _relativePath, ...file }) => file);
+            const encryptedLegacy = createEncryptedManifest({ ...currentManifest, files: legacyFiles }, unlocked.vaultKey, currentEnvelope.vaultId, {
+                schema: 2, id: currentManifest.id, revision: currentManifest.revision
+            });
+            await writeFile(path.join(output, 'manifest.enc'), serializeEnvelope({
+                ...currentEnvelope,
+                objectIndex: createObjectIndex(legacyFiles),
+                manifest: encryptedLegacy.descriptor
+            }));
+        } finally {
+            unlocked.vaultKey.fill(0);
+        }
+        await mkdir(path.join(workspace, 'first'), { recursive: true });
+        await mkdir(path.join(workspace, 'second'), { recursive: true });
+        await writeFile(path.join(workspace, 'first', 'same-name.txt'), 'first nested\n');
+        await writeFile(path.join(workspace, 'second', 'same-name.txt'), 'second nested\n');
+        const snapshotFiles = new Map();
+        for (const name of await readdir(output)) {
+            if (name === 'manifest.enc' || /^[0-9a-f]{32}\.bin$/.test(name)) snapshotFiles.set(`files/${name}`, await readFile(path.join(output, name)));
+        }
+        const previousMode = process.env.PRINT_DRIVE_PORTABLE_MODE;
+        const previousRoot = process.env.PRINT_DRIVE_ROOT;
+        process.env.PRINT_DRIVE_PORTABLE_MODE = '1';
+        process.env.PRINT_DRIVE_ROOT = fixture;
+        let update;
+        try {
+            update = await buildWorkspaceUpdate({
+                snapshot: { baseSha: BASE, baseTreeSha: TREE, files: snapshotFiles, prefix: 'files' },
+                workspaceDirectory: workspace, passphrase, mode: 'add-replace'
+            });
+        } finally {
+            restoreEnvironment('PRINT_DRIVE_PORTABLE_MODE', previousMode);
+            restoreEnvironment('PRINT_DRIVE_ROOT', previousRoot);
+        }
+        assert([...update.files.keys()].every((value) => value === 'files/manifest.enc' || /^files\/[0-9a-f]{32}\.bin$/.test(value)));
+        const targetEnvelope = parseEnvelopeText(update.files.get('files/manifest.enc').toString('utf8'));
+        assert.equal(targetEnvelope.manifest.schema, 3);
+        const targetUnlocked = unlockVaultKey(targetEnvelope, passphrase);
+        try {
+            const targetManifest = decryptManifestV2(targetEnvelope, targetUnlocked.vaultKey);
+            assert.deepEqual(targetManifest.files.map((file) => file.relativePath).sort(), ['first/same-name.txt', 'root.txt', 'second/same-name.txt']);
+        } finally {
+            targetUnlocked.vaultKey.fill(0);
+        }
+        if (!globalThis.crypto) globalThis.crypto = webcrypto;
+        if (!globalThis.location) globalThis.location = new URL('https://example.test/print-drive/');
+        const browserCrypto = await import('../crypto.js');
+        const context = await browserCrypto.unlockVault(passphrase, targetEnvelope);
+        try {
+            const browserManifest = await browserCrypto.decryptManifest(targetEnvelope, context);
+            assert.deepEqual(browserManifest.files.map((file) => file.relativePath).sort(), ['first/same-name.txt', 'root.txt', 'second/same-name.txt']);
+        } finally {
+            context.rawKeyBytes.fill(0);
         }
     } finally {
         await rm(fixture, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
