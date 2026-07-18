@@ -25,3 +25,9 @@
 v2 format과 transactional writer를 유지한 채 AES-GCM streaming을 도입하려면 AAD metadata 확정, padding, ciphertext hash, durable temporary file과 pre-commit authentication 경계를 함께 바꿔야 합니다. 이번 pass에서는 format 안정성을 우선해 streaming rewrite를 하지 않았습니다. Source는 1MiB chunk로 hash하고 파일을 한 번에 하나씩 처리하지만, 변경된 큰 파일은 암호화와 인증 중 source/ciphertext/plaintext Buffer가 겹칩니다. 실제 100 MiB initial/modify sampled peak RSS는 약 479 MB/477 MB였습니다.
 
 따라서 512 MiB format 상한은 저사양 기기의 권장 운용 크기가 아닙니다. 큰 파일은 충분한 memory가 있는 신뢰 기기에서 처리하고, browser update/decrypt의 보수적 256 MiB 상한을 유지합니다. 후속 streaming 작업은 v2 byte interoperability와 transaction failpoint test를 먼저 고정한 별도 변경으로 다뤄야 합니다.
+
+## 폴더와 휴대형 업데이터 비용
+
+재귀 source scan은 directory entry와 안전한 상대 경로를 모두 확인하지만 fingerprint가 유지된 파일은 기존과 같이 content hash/read를 생략합니다. rename/move는 새 경로의 파일을 hash해 유일한 size/SHA-256 대응을 찾은 뒤 ciphertext blob을 재사용합니다. 폴더 구조 자체는 plaintext manifest가 아니라 암호화 manifest 안의 `relativePath`에만 들어갑니다.
+
+휴대형 업데이터는 정확한 Git tree snapshot을 만들기 위해 원격 `files/` blob을 읽고, 현재 구현은 대상 encrypted file map을 메모리에 보관합니다. 각 Git blob은 100 MiB를 넘기 전에 거부되며 브라우저 전체 ZIP은 5,000개·평문 합계 512 MiB 상한을 유지합니다. 매우 큰 vault는 충분한 RAM과 안정된 네트워크가 있는 신뢰 기기에서 처리해야 하며, GitHub API 호출·memory를 줄이는 unchanged Git-blob 재사용 최적화는 후속 과제입니다.

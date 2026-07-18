@@ -11,6 +11,8 @@ Print Drive는 개인 기기에서 준비한 파일을 학교·도서관 같은 
 - Git
 - Web Crypto API를 지원하는 최신 브라우저
 
+Windows 10/11 x64 휴대형 업데이터 사용자는 위 개발 도구를 설치하지 않아도 됩니다. 저장소 빌드·운영자에게만 필요합니다.
+
 ```powershell
 npm ci --ignore-scripts
 python -m pip install -r requirements.txt
@@ -58,6 +60,14 @@ node scripts/config_cli.mjs dry-run
 기존 스크립트를 위한 `PRINT_DRIVE_ROOT`, `PRINT_DRIVE_SOURCE_DIR`, `PRINT_DRIVE_OUTPUT_DIR`, `PRINT_DRIVE_PASSWORD_FILE`, `PRINT_DRIVE_PASSPHRASE` 환경변수는 유지됩니다. config와 환경변수 모두 동일한 output 경계 검증을 통과해야 합니다. custom password file은 저장소 밖에 두어야 하며 source/output 내부 경로는 거부됩니다.
 
 저장소가 OneDrive·Dropbox 같은 동기화 폴더에 있으면 Git에서 제외된 기본 passphrase file도 cloud client가 복제할 수 있습니다. `PRINT_DRIVE_PASSWORD_FILE`을 저장소와 cloud-sync root 밖의 접근 제한 경로로 지정하고 별도 offline backup을 유지하세요.
+
+기존 암호화 vault와 평문 폴더의 연결이 끊겼다면 먼저 쓰기 없는 계획을 확인합니다.
+
+```powershell
+npm run source:relink -- --source "D:/PrintDrive-Inbox"
+```
+
+완전 일치할 때만 `--adopt`로 state/config를 재구축할 수 있습니다. `--add-replace`는 원격 전용 파일을 보존하고, `--mirror`는 명시적 확인 뒤 source와 같게 만듭니다. vault ID가 예상과 다른 경우에는 중단합니다. 자세한 분류와 복구는 `docs/OPERATIONS.md`와 `docs/RECOVERY.md`를 따르세요.
 
 ## 2. 최초 암호화와 v1 migration
 
@@ -112,18 +122,25 @@ python auto_sync.py
 
 자동 동기화기는 다음 경계를 적용합니다.
 
-- source 최상위 파일만 감시하며 output 이벤트는 감시하지 않습니다.
+- source 하위 폴더까지 재귀 감시하며 같은 basename은 `relativePath`로 구분합니다. output 이벤트는 감시하지 않습니다.
 - 숨김 파일, Office 임시 파일, OneDrive/브라우저의 incomplete-download suffix를 무시합니다.
 - 크기와 수정 시간이 연속 snapshot에서 안정될 때까지 기다립니다.
-- symlink file은 암호화 source로 사용하지 않습니다.
+- symlink file·directory는 암호화 source로 사용하지 않습니다.
 - Git top-level, allowed branch, remote, upstream을 commit 전에 확인합니다.
+- 암호화 전에 remote를 fetch합니다. clean 상태에서 remote만 앞선 경우에만 `--ff-only`로 갱신하고, dirty/ahead/diverged 상태는 암호화 전에 중단합니다.
 - `git add -A -- <output>`과 `git commit --only -- <output>`을 사용하므로 다른 staged 변경을 commit하지 않습니다.
 - commit 후 push가 실패해도 local commit을 보존하며 60초 뒤와 다음 실행에서 새 파일 변경 없이도 pending commit을 다시 확인합니다.
-- non-fast-forward에서는 merge, rebase, force push를 자동 실행하지 않습니다.
+- diverged/non-fast-forward에서는 merge, rebase, force push를 자동 실행하지 않습니다.
 
 상세 운영과 복구는 `docs/OPERATIONS.md`, `docs/RECOVERY.md`에 있습니다.
 
-## 4. 브라우저 업데이트 패키지
+## 4. 세 가지 업데이트 흐름
+
+1. **연결된 관리자 source**: `encrypt_files.mjs` 또는 `auto_sync.py`로 재귀 source를 증분 암호화합니다. 연결이 끊겼으면 `source:relink`로 먼저 분류합니다.
+2. **다른 Windows 관리자 PC**: `PrintDrive-Portable-windows-x64.zip`을 풀고 `Workspace`에 파일을 둔 뒤 실행합니다. 설치된 Node.js/Git/Python 없이 exact Git SHA를 기준으로 암호화 파일만 원자 commit합니다. Device Flow, 충돌, branch-protection PR fallback과 owner 설정은 `docs/PORTABLE_UPDATER.md`를 봅니다.
+3. **웹 브라우저 fallback**: 아래 update ZIP을 만든 뒤 기존 관리자 checkout에서 검사·적용·push합니다.
+
+### 브라우저 업데이트 패키지
 
 잠금 해제 뒤 `더보기 → 관리`에서 암호화 update ZIP을 만들 수 있습니다. ZIP은 저장소에 직접 쓰거나 GitHub token을 보관하지 않습니다. `print-drive-update.json`, 대상 `manifest.enc`, 새 immutable object만 포함하며 교체된 object는 제거 목록에 기록됩니다.
 
@@ -142,6 +159,8 @@ git push origin main
 
 제한 공유의 현재 browser decrypt 상한은 encrypted object 256 MiB이며, 이보다 큰 파일의 링크 생성은 UI가 거부합니다.
 
+schema 3 vault는 암호화 manifest 안에 안전한 `relativePath`를 저장합니다. 브라우저는 breadcrumb와 폴더 행을 제공하고, 검색·최근 파일은 모든 폴더를 대상으로 하며, 선택·현재 폴더·전체 ZIP은 논리 경로를 보존합니다. 기존 schema 2 루트 파일은 계속 읽을 수 있습니다.
+
 ## 5. 검증과 Pages build
 
 ```powershell
@@ -149,12 +168,17 @@ npm run check
 npm test
 npm run build
 node scripts/check_dist.mjs
+npm run verify:production
+npm run portable:build
+npm run portable:test
 npm run benchmark
 ```
 
 - `npm run check`: JavaScript/Python syntax, workflow SHA pin, tracked/history path leak, public output allowlist와 v2 object integrity를 검사합니다.
 - `npm test`: browser/security/crypto test, synthetic temporary Git 장애 주입, encryption smoke test를 실행합니다.
 - `npm run build`: 외부 CSS와 bootstrap을 포함한 local JavaScript dependency graph를 그대로 복사하고 검증된 artifact를 임시 디렉터리에서 만든 뒤 `dist`를 교체합니다.
+- `npm run verify:production`: 실제 Pages manifest/object의 공개 무결성을 확인하고, local production passphrase가 있으면 Node와 built browser code로 모든 object를 인증·복호화합니다. passphrase가 없으면 복호화하지 않았다고 명시합니다.
+- `portable:build`/`portable:test`: Windows x64 SEA ZIP과 SHA-256을 만들고 PATH가 빈 상태에서 실제 실행 파일의 UI asset과 AES-GCM 왕복을 확인합니다.
 - `npm run benchmark`: v2의 100-file 증분 변경·전체 audit·rotation과 100 MiB 파일의 시간, source read, 복호화 수, sampled peak RSS를 측정합니다. 결과와 해석은 `docs/PERFORMANCE.md`에 있습니다.
 - v2 build는 strict envelope schema와 `objectIndex.version=1`의 path, size, ciphertext SHA-256을 실제 blob과 확인하고 참조된 object만 배포합니다.
 - legacy v1에는 공개 object index가 없어 manifest-to-blob 참조를 증명할 수 없습니다. 호환 build는 target stale 파일은 제거하지만 source blob 전부를 복사하므로 가능한 빨리 v2로 migration해야 합니다.
@@ -172,6 +196,7 @@ Pull request는 verify, dependency review, CodeQL을 실행합니다. `main` dep
 3. GitHub Advanced Security를 사용할 수 있다면 secret scanning과 push protection 활성화
 4. `github-pages` environment에 필요한 reviewer/branch protection 적용
 5. workflow가 요청하지 않은 write permission을 받지 않도록 default workflow permission을 read-only로 설정
+6. 휴대형 업데이터용 GitHub App에 Device Flow, 대상 저장소 `Contents: Read and write`, fallback용 `Pull requests: Read and write`만 부여하고 공개 client ID만 workspace 설정에 기록
 
 ## 7. 공용 기기와 브라우저 보안 한계
 

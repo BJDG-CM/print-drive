@@ -2,6 +2,16 @@
 
 복구 전 auto sync를 종료하고 저장소와 encrypted output을 별도 위치에 backup한다. 아래 절차는 force push나 history rewrite를 자동 실행하지 않는다.
 
+## 평문 source 연결을 잃은 경우
+
+새 source라고 가정해 바로 mirror하지 않는다. encrypted output과 passphrase backup을 보존한 뒤 다음 dry-run으로 exact/changed/local-only/remote-only/moved를 확인한다.
+
+```powershell
+npm run source:relink -- --source "D:/Recovered-PrintDrive-Inbox" --expected-vault-id <vault-id>
+```
+
+모두 exact면 `--adopt`로 config/state만 복구한다. remote-only가 있으면 기본 `--add-replace`가 보존한다. `--mirror`는 검토·backup·명시적 확인 뒤에만 사용한다. content가 다른 파일을 exact로 표시하거나 다른 vault ID를 우회하지 않는다.
+
 ## push 실패 후 local commit이 남은 경우
 
 ```powershell
@@ -32,6 +42,8 @@ git push origin HEAD:refs/heads/main
 6. `node scripts/config_cli.mjs check`와 `dry-run` 후 sync를 재시작한다.
 
 공유 branch에 `--force` 또는 `--force-with-lease`를 사용해 자동 sync를 복구하지 않는다.
+
+clean 상태에서 remote만 앞섰다면 현재 동기화기는 encryption 전에 `--ff-only`로 따라간다. dirty, local ahead, diverged 결과는 자동 복구 대상이 아니므로 위 절차로 사용자 변경을 먼저 보존한다.
 
 ## wrong branch, detached HEAD, upstream 없음
 
@@ -73,6 +85,16 @@ git push origin main
 ```
 
 revert 전 encrypted manifest와 blob 집합이 같은 version의 일관된 snapshot인지 확인한다.
+
+배포 뒤 앱 shell과 vault가 섞인 것처럼 보이면 먼저 `build-meta.json`, HTML build ID, service-worker cache ID가 같은지 확인한다. 새 bootstrap은 소유 cache와 stale worker를 한 번 정리하고 동일 transition을 반복 reload하지 않는다. 그래도 복구되지 않으면 탭을 닫고 사이트 데이터의 Print Drive worker/cache만 정리한 뒤 새 탭에서 다시 연다. 개별 `.bin`을 임의 교체하지 말고 `npm run verify:production`으로 공개 size/hash와 가능한 실제 복호화를 구분해 확인한다.
+
+## 휴대형 업데이터 충돌·중단
+
+- `BASE_SHA_CHANGED` 또는 ref conflict: 원격을 바꾸지 말고 새 snapshot/preview부터 다시 시작한다.
+- blob upload 또는 tree/commit 생성 중단: branch ref는 기존 commit을 가리킨다. 재실행해 새 계획을 만든다. 도달 불가능한 Git object는 저장소 상태가 아니다.
+- branch protection 거절: UI의 fallback으로 임시 branch와 PR을 만든다. PR merge와 Pages 검증 전에는 배포 완료가 아니다.
+- token 권한 오류: token을 설정 파일에 넣지 말고 GitHub App 설치/SSO/Contents·Pull requests 권한을 고친 뒤 프로세스를 재시작한다.
+- vault ID 불일치 또는 100 MiB blob 초과: 제한을 우회하지 않는다. 올바른 설정을 받거나 파일을 안전하게 분할한다.
 
 ## 평문 또는 secret이 Git history에 들어간 경우
 

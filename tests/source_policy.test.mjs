@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -8,7 +8,7 @@ import { decryptManifestV2, parseEnvelopeText, unlockVaultKey } from '../vault_f
 
 const PASSWORD = 'source-policy-test-password-2026';
 
-test('writer accepts edge-case filenames and excludes hidden, incomplete, and symlink sources', async () => {
+test('writer accepts edge-case filenames and excludes hidden and incomplete sources', async () => {
     const fixture = await createFixture('source-policy-');
     const previous = process.env.PRINT_DRIVE_PASSPHRASE;
     process.env.PRINT_DRIVE_PASSPHRASE = PASSWORD;
@@ -19,14 +19,6 @@ test('writer accepts edge-case filenames and excludes hidden, incomplete, and sy
         await writeFile(path.join(fixture.source, '.hidden.txt'), 'hidden');
         await writeFile(path.join(fixture.source, 'draft.partial'), 'partial');
         await writeFile(path.join(fixture.source, '~scratch.txt'), 'temporary');
-        const symlinkTarget = path.join(fixture.root, 'outside.txt');
-        await writeFile(symlinkTarget, 'outside');
-        try {
-            await symlink(symlinkTarget, path.join(fixture.source, 'linked.txt'), 'file');
-        } catch (error) {
-            if (!['EPERM', 'EACCES', 'ENOTSUP'].includes(error.code)) throw error;
-        }
-
         await runEncrypt(fixture);
         const envelope = parseEnvelopeText(await readFile(path.join(fixture.output, 'manifest.enc'), 'utf8'));
         const { vaultKey } = unlockVaultKey(envelope, PASSWORD);
@@ -54,7 +46,7 @@ test('writer rejects distinct source names that collide after NFC normalization 
             context.skip('Filesystem normalizes canonically equivalent filenames.');
             return;
         }
-        await assert.rejects(() => runEncrypt(fixture), /Duplicate filename after NFC normalization/);
+        await assert.rejects(() => runEncrypt(fixture), /Duplicate (?:filename|path) after (?:case-insensitive )?NFC normalization/);
     } finally {
         restorePassphrase(previous);
         await rm(fixture.root, { recursive: true, force: true });

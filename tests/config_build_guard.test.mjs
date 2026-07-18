@@ -191,11 +191,13 @@ test('build replaces dist, keeps external assets, and removes stale v2 objects',
         await writeFile(path.join(filesDir, `${first.blobId}.bin`), firstBytes);
         await writeFile(path.join(filesDir, `${second.blobId}.bin`), secondBytes);
         await writeEnvelope(filesDir, [first, second]);
-        await buildDist({ projectRoot: root, outputDir: filesDir });
+        const firstBuild = await buildDist({ projectRoot: root, outputDir: filesDir });
 
         const firstDistNames = await readdir(path.join(root, 'dist', 'files'));
         assert(firstDistNames.includes(`${second.blobId}.bin`));
-        assert.equal(await readFile(path.join(root, 'dist', 'index.html'), 'utf8'), await readFile(path.join(root, 'index.html'), 'utf8'));
+        const builtHtml = await readFile(path.join(root, 'dist', 'index.html'), 'utf8');
+        assert.match(builtHtml, new RegExp(firstBuild.buildIdentity.buildId));
+        assert.doesNotMatch(builtHtml, /__PRINT_DRIVE_BUILD_ID__/);
         assert.equal(await readFile(path.join(root, 'dist', 'styles.css'), 'utf8'), 'body { color: #111; }\n');
         assert.equal(await readFile(path.join(root, 'dist', 'capability.js'), 'utf8'), 'export const capability = true;\n');
 
@@ -355,7 +357,7 @@ function createV1Envelope() {
 async function createMinimalBrowserProject(root) {
     await mkdir(root, { recursive: true });
     const files = new Map([
-        ['index.html', '<!doctype html><link rel="stylesheet" href="styles.css"><script defer src="bootstrap.js"></script>\n'],
+        ['index.html', '<!doctype html><meta name="print-drive-build-id" content="__PRINT_DRIVE_BUILD_ID__"><link rel="stylesheet" href="styles.css"><script defer src="bootstrap.js"></script>\n'],
         ['styles.css', 'body { color: #111; }\n'],
         ['bootstrap.js', "import('./app.js');\n"],
         ['app.js', "import { capability } from './capability.js';\nconsole.log(capability);\n"],
@@ -364,7 +366,7 @@ async function createMinimalBrowserProject(root) {
         ['manifest.json', '{}\n'],
         ['icon.svg', '<svg xmlns="http://www.w3.org/2000/svg"/>\n'],
         ['robots.txt', 'User-agent: *\nDisallow: /\n'],
-        ['sw.js', 'self.addEventListener("fetch", () => {});\n']
+        ['sw.js', "const BUILD_ID = '__PRINT_DRIVE_BUILD_ID__';\nself.addEventListener('fetch', () => BUILD_ID);\n"]
     ]);
     await Promise.all([...files].map(([name, value]) => writeFile(path.join(root, name), value)));
 }

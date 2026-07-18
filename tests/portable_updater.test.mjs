@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { main as encryptMain } from '../encrypt_files.mjs';
 import {
     applyAtomicEncryptedUpdate,
     fetchExactVaultSnapshot,
@@ -12,11 +16,14 @@ import {
     startDeviceFlow
 } from '../portable/remote_updater.mjs';
 import { validateWorkspaceConfig } from '../portable/main.mjs';
+import { buildWorkspaceUpdate } from '../portable/workspace_update.mjs';
+import { decryptManifestV2, parseEnvelopeText, unlockVaultKey } from '../vault_format.mjs';
 
 const BASE = '1'.repeat(40);
 const TREE = '2'.repeat(40);
 const COMMIT = '3'.repeat(40);
 const CONFIG = Object.freeze({ owner: 'BJDG-CM', repo: 'print-drive', branch: 'main', encryptedOutputPath: 'files' });
+const ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 
 test('device flow keeps token in memory and redacts it from errors', async () => {
     const responses = [
@@ -117,6 +124,60 @@ test('portable configuration rejects secrets and incomplete repository scope', (
     assert.throws(() => validateWorkspaceConfig({ ...valid, token: 'secret' }), /형식|secret/);
 });
 
+test('portable workspace update preserves remote-only files and encrypts nested additions', async () => {
+    const fixture = await mkdtemp(path.join(ROOT, '.tmp', 'portable-workspace-'));
+    const originalSource = path.join(fixture, 'original');
+    const output = path.join(fixture, 'files');
+    const workspace = path.join(fixture, 'Workspace');
+    const passwordFile = path.join(fixture, 'passphrase');
+    const passphrase = 'portable-workspace-test-passphrase';
+    await Promise.all([mkdir(originalSource), mkdir(output), mkdir(workspace)]);
+    try {
+        await writeFile(path.join(originalSource, 'remote-only.txt'), 'keep remote\n');
+        await writeFile(passwordFile, `${passphrase}\n`);
+        await encryptMain([
+            '--source', originalSource, '--out', output, '--password-file', passwordFile,
+            '--iterations', '200000', '--padding-bytes', '0'
+        ]);
+        await mkdir(path.join(workspace, '폴더'));
+        await writeFile(path.join(workspace, '폴더', '추가.txt'), 'nested addition\n');
+        const snapshotFiles = new Map();
+        for (const name of await readdir(output)) {
+            if (name === 'manifest.enc' || /^[0-9a-f]{32}\.bin$/.test(name)) {
+                snapshotFiles.set(`files/${name}`, await readFile(path.join(output, name)));
+            }
+        }
+        const previousMode = process.env.PRINT_DRIVE_PORTABLE_MODE;
+        const previousRoot = process.env.PRINT_DRIVE_ROOT;
+        process.env.PRINT_DRIVE_PORTABLE_MODE = '1';
+        process.env.PRINT_DRIVE_ROOT = fixture;
+        let update;
+        try {
+            update = await buildWorkspaceUpdate({
+                snapshot: { baseSha: BASE, baseTreeSha: TREE, files: snapshotFiles, prefix: 'files' },
+                workspaceDirectory: workspace,
+                passphrase,
+                mode: 'add-replace'
+            });
+        } finally {
+            restoreEnvironment('PRINT_DRIVE_PORTABLE_MODE', previousMode);
+            restoreEnvironment('PRINT_DRIVE_ROOT', previousRoot);
+        }
+        assert.deepEqual(update.plan.additions, ['폴더/추가.txt']);
+        assert.deepEqual(update.plan.removals, []);
+        const envelope = parseEnvelopeText(update.files.get('files/manifest.enc').toString('utf8'));
+        const { vaultKey } = unlockVaultKey(envelope, passphrase);
+        try {
+            const manifest = decryptManifestV2(envelope, vaultKey);
+            assert.deepEqual(manifest.files.map((file) => file.relativePath).sort(), ['remote-only.txt', '폴더/추가.txt']);
+        } finally {
+            vaultKey.fill(0);
+        }
+    } finally {
+        await rm(fixture, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+});
+
 class FixtureApi {
     constructor() { this.routes = new Map(); this.calls = []; }
     on(method, path, value) {
@@ -158,3 +219,7 @@ function validUpdate() {
 }
 
 function blob(value) { return { encoding: 'base64', content: Buffer.from(value).toString('base64') }; }
+function restoreEnvironment(name, value) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+}
