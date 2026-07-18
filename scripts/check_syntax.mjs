@@ -1,44 +1,47 @@
 #!/usr/bin/env node
+import { readdir } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
-const JS_FILES = [
-    'app.js',
-    'crypto.js',
-    'file_types.js',
-    'qr.js',
-    'ui.js',
-    'zip.js',
-    'sw.js',
-    'encrypt_files.mjs',
-    'set_password.mjs',
-    'paths.mjs',
-    'public_files_guard.mjs',
-    'check_public_files.mjs',
-    'scripts/build_dist.mjs',
-    'scripts/check_dist.mjs',
-    'scripts/check_syntax.mjs',
-    'scripts/py_compile_check.mjs',
-    'scripts/smoke_test.mjs'
-];
+const SKIP_DIRECTORIES = new Set(['.git', '.tmp', 'dist', 'files', 'private_files', 'node_modules']);
 
-let failed = false;
-
-for (const file of JS_FILES) {
-    const result = spawnSync(process.execPath, ['--check', file], {
-        cwd: ROOT,
-        stdio: 'inherit'
-    });
-
-    if (result.status !== 0) {
-        failed = true;
+async function main() {
+    const files = await discoverJavaScript(ROOT);
+    let failed = false;
+    for (const file of files) {
+        const result = spawnSync(process.execPath, ['--check', file], {
+            cwd: ROOT,
+            stdio: 'inherit',
+            windowsHide: true
+        });
+        if (result.status !== 0) {
+            failed = true;
+        }
     }
+    if (failed) {
+        process.exit(1);
+    }
+    console.log(`node --check passed for ${files.length} JavaScript file(s), including capability/public-device modules and tests.`);
 }
 
-if (failed) {
+async function discoverJavaScript(directory, prefix = '') {
+    const result = [];
+    const entries = await readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+        if (entry.isDirectory()) {
+            if (!SKIP_DIRECTORIES.has(entry.name)) {
+                result.push(...await discoverJavaScript(path.join(directory, entry.name), path.join(prefix, entry.name)));
+            }
+        } else if (entry.isFile() && /\.(?:js|mjs)$/.test(entry.name)) {
+            result.push(path.join(prefix, entry.name));
+        }
+    }
+    return result.sort();
+}
+
+main().catch((error) => {
+    console.error(error.message);
     process.exit(1);
-}
-
-console.log(`node --check passed for ${JS_FILES.length} file(s).`);
+});

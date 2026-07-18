@@ -4,78 +4,220 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#2563eb">
+    <meta name="theme-color" content="#1d4ed8">
+    <meta name="referrer" content="no-referrer">
+    <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; frame-src 'self' blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'self'; manifest-src 'self'; worker-src 'self'">
+    <meta http-equiv="Permissions-Policy"
+        content="camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), bluetooth=(), clipboard-read=()">
     <title>Print Drive</title>
     <link rel="manifest" href="manifest.json">
     <link rel="icon" href="icon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="styles.css">
+    <script src="bootstrap.js"></script>
 </head>
 
 <body>
     <div class="toast-root" id="toast-root" aria-live="polite" aria-atomic="true"></div>
 
-    <main class="container">
-        <section class="auth-view" id="auth-view" hidden>
-            <div class="brand">
-                <span class="brand-mark" aria-hidden="true">PD</span>
-                <h1>Print Drive</h1>
+    <main class="app-frame" id="app-root">
+        <section class="screen-view mode-select-view" id="mode-select-view" aria-labelledby="mode-select-title" hidden>
+            <div class="entry-brand" aria-hidden="true">PD</div>
+            <div class="entry-heading">
+                <p class="eyebrow">PRINT DRIVE</p>
+                <h1 id="mode-select-title">어떻게 파일을 열까요?</h1>
+                <p>신뢰하는 기기에서는 전체 보관함을 열고, 공용 기기에서는 받은 링크의 안내만 확인하세요.</p>
             </div>
-            <p class="auth-copy">공개 저장소에는 암호화된 파일만 있으며, 비밀번호는 이 브라우저 안에서만 복호화에 사용됩니다.</p>
-            <form class="password-form" id="password-form">
-                <label for="password-input">암호화 비밀번호</label>
-                <div class="password-row">
-                    <input id="password-input" type="password" autocomplete="current-password" placeholder="비밀번호 입력">
-                    <button type="submit" id="auth-submit">잠금 해제</button>
+
+            <div class="entry-options" aria-label="열기 방식 선택">
+                <button class="entry-option primary-option" type="button" id="btn-mode-vault">
+                    <span class="entry-option-icon" aria-hidden="true">PD</span>
+                    <span class="entry-option-copy">
+                        <strong>전체 보관함 열기</strong>
+                        <span>비밀번호로 파일을 검색하고 미리보기·인쇄합니다 · 신뢰하는 내 기기용</span>
+                    </span>
+                    <span class="entry-option-arrow" aria-hidden="true">→</span>
+                </button>
+                <button class="entry-option" type="button" id="btn-mode-share-help">
+                    <span class="entry-option-icon muted" aria-hidden="true">?</span>
+                    <span class="entry-option-copy">
+                        <strong>공유 링크 사용 안내</strong>
+                        <span>파일별 v2 공유와 이전 파일 위치 링크의 차이를 확인합니다</span>
+                    </span>
+                    <span class="entry-option-arrow" aria-hidden="true">→</span>
+                </button>
+            </div>
+
+            <p class="entry-caution">v2 공유 링크는 선택 파일 키만 전달합니다. 이전 <code>#file=&lt;id&gt;</code> 위치 링크는 전체 보관함 비밀번호가 필요합니다.</p>
+        </section>
+
+        <section class="screen-view share-help-view" id="share-help-view" aria-labelledby="share-help-title" hidden>
+            <div class="centered-panel compact-panel">
+                <p class="eyebrow">공유 링크 안내</p>
+                <h1 id="share-help-title">공유 링크는 두 종류입니다</h1>
+                <p>링크를 주소창에서 열면 Print Drive가 형식을 확인하고 가능한 가장 제한된 화면으로 안내합니다.</p>
+                <div class="truth-panel capability-panel" role="note">
+                    <strong>v2 파일별 capability 링크</strong>
+                    <ul>
+                        <li>선택한 파일의 키만 임의 secret으로 보호해 전달하며 master key는 포함하지 않습니다.</li>
+                        <li>secret은 URL fragment에서 읽은 즉시 주소창과 방문 기록의 현재 항목에서 제거합니다.</li>
+                        <li>링크 자체가 선택 파일의 접근 권한입니다. 비밀번호 없이 열리므로 신뢰하는 채널로만 전달하고, 전달 뒤에는 회수할 수 없다고 가정하세요.</li>
+                        <li>표시된 만료 시각은 이 브라우저가 확인합니다. 정적 호스팅은 만료·사용 횟수·회수를 서버에서 강제할 수 없습니다.</li>
+                    </ul>
                 </div>
-                <label class="remember-row">
-                    <input id="remember-session" type="checkbox">
-                    이 탭에서 새로고침해도 유지. 공용 PC에서는 체크하지 마세요
-                </label>
-                <p class="form-message" id="auth-error" hidden></p>
-            </form>
+                <div class="truth-panel legacy-panel" role="note">
+                    <strong>이전 <code>#file=&lt;id&gt;</code> 위치 링크</strong>
+                    <ul>
+                        <li>파일 위치만 가리키며 파일별 key를 전달하지 않습니다.</li>
+                        <li>전체 보관함 비밀번호가 필요하므로 제한 공유나 만료 링크가 아닙니다.</li>
+                        <li>공용 기기에서는 세션 유지 옵션을 선택하지 마세요.</li>
+                    </ul>
+                </div>
+                <button type="button" id="btn-share-help-back">처음 화면으로 돌아가기</button>
+            </div>
         </section>
 
-        <section class="state-view" id="loading-view" hidden>
+        <section class="screen-view auth-view" id="auth-view" aria-labelledby="auth-title" hidden>
+            <button class="back-button" type="button" id="btn-back-mode">← 열기 방식 선택</button>
+            <div class="centered-panel auth-panel">
+                <div class="entry-brand small" aria-hidden="true">PD</div>
+                <div class="entry-heading">
+                    <p class="eyebrow">신뢰 기기 · 전체 보관함</p>
+                    <h1 id="auth-title">전체 보관함 잠금 해제</h1>
+                    <p>공개 배포본에는 암호화된 파일만 있으며, 비밀번호는 이 브라우저 안에서 복호화에 사용됩니다.</p>
+                </div>
+                <form class="password-form" id="password-form">
+                    <label for="password-input">암호화 비밀번호</label>
+                    <div class="password-row">
+                        <input id="password-input" type="password" autocomplete="current-password"
+                            placeholder="비밀번호 입력" aria-describedby="auth-error">
+                        <button type="submit" id="auth-submit">잠금 해제</button>
+                    </div>
+                    <label class="remember-row">
+                        <input id="remember-session" type="checkbox">
+                        <span>이 탭에서 새로고침해도 세션 유지 <small>공용 기기에서는 선택하지 마세요</small></span>
+                    </label>
+                    <p class="form-message" id="auth-error" role="alert" hidden></p>
+                </form>
+            </div>
+        </section>
+
+        <section class="screen-view state-view" id="loading-view" aria-labelledby="loading-title" aria-live="polite" hidden>
             <div class="spinner" aria-hidden="true"></div>
-            <p class="loading-text">암호화된 목록을 확인하는 중입니다...</p>
+            <h1 class="state-heading" id="loading-title">보관함을 여는 중입니다</h1>
+            <p class="loading-text" id="loading-detail">암호화된 목록을 확인하는 중입니다...</p>
         </section>
 
-        <section id="app-view" hidden>
-            <div class="loading-overlay" id="global-loader" hidden>
-                <div class="spinner" aria-hidden="true"></div>
-                <p class="loading-text" id="loading-message">처리 중입니다...</p>
-                <button class="secondary" type="button" id="btn-cancel-zip" hidden>취소</button>
+        <section class="screen-view public-share-view" id="public-share-view" aria-labelledby="public-share-title" hidden>
+            <header class="public-header">
+                <div class="brand compact-brand">
+                    <span class="brand-mark" aria-hidden="true">PD</span>
+                    <div>
+                        <strong>Print Drive</strong>
+                        <span>공용 기기 · 공유 파일</span>
+                    </div>
+                </div>
+                <span class="context-badge">v2 파일별 공유</span>
+            </header>
+            <div class="public-file-layout">
+                <div class="public-file-heading">
+                    <p class="eyebrow">확인된 공유 파일</p>
+                    <h1 id="public-share-title"><span id="public-file-name">파일을 확인하는 중입니다</span></h1>
+                    <p id="public-file-meta">선택 파일의 capability와 client 표시 만료 시각을 확인한 뒤 내용을 표시합니다.</p>
+                    <p class="public-idle-notice" id="public-idle-notice">활동이 2분 동안 없으면 공유 파일을 닫고 앱이 관리하는 세션 데이터를 정리합니다.</p>
+                </div>
+                <p class="sr-only" id="public-status" role="status" aria-live="polite" aria-atomic="true"></p>
+                <div class="public-preview-body" id="public-preview-body" aria-label="공유 파일 미리보기">
+                    <p>미리보기를 준비하는 중입니다.</p>
+                </div>
+                <div class="public-actions">
+                    <button type="button" id="btn-public-print" disabled>인쇄 창 열기</button>
+                    <button class="secondary" type="button" id="btn-public-download" disabled>다운로드</button>
+                </div>
+                <button class="danger-outline public-exit-action" type="button" id="btn-public-exit">공용 기기 사용 종료</button>
+            </div>
+        </section>
+
+        <section class="screen-view public-exit-view" id="public-exit-view" aria-labelledby="public-exit-title" hidden>
+            <div class="centered-panel exit-panel">
+                <div class="exit-icon" aria-hidden="true">✓</div>
+                <div class="entry-heading">
+                    <p class="eyebrow">공용 기기 사용 종료</p>
+                    <h1 id="public-exit-title">Print Drive가 관리하는 데이터를 정리했습니다</h1>
+                    <p>아래 결과를 확인하고, 앱이 지울 수 없는 항목은 직접 정리하세요.</p>
+                </div>
+                <section class="cleanup-group cleaned-group" aria-labelledby="cleanup-cleared-title">
+                    <h2 id="cleanup-cleared-title">정리된 항목</h2>
+                    <ul id="public-exit-cleared">
+                        <li>열려 있던 미리보기와 임시 파일 URL</li>
+                    </ul>
+                </section>
+                <section class="cleanup-group remaining-group" aria-labelledby="cleanup-remaining-title">
+                    <h2 id="cleanup-remaining-title">직접 확인할 항목</h2>
+                    <ul id="public-exit-remaining">
+                        <li>내려받은 파일과 브라우저 다운로드 기록</li>
+                        <li>방문 기록, OS 최근 파일, 프린터 기록</li>
+                    </ul>
+                </section>
+                <p class="truth-note">게스트 모드나 시크릿 모드도 내려받은 파일과 기기·프린터 기록을 자동으로 지우지는 않습니다.</p>
+                <button type="button" id="btn-public-exit-done">처음 화면으로 돌아가기</button>
+            </div>
+        </section>
+
+        <section class="screen-view vault-view" id="app-view" aria-labelledby="vault-title" hidden>
+            <div class="loading-overlay" id="global-loader" role="dialog" aria-modal="true" aria-labelledby="loading-message" tabindex="-1" hidden>
+                <div class="operation-card">
+                    <div class="spinner" aria-hidden="true"></div>
+                    <p class="loading-text" id="loading-message" role="status" aria-live="polite" aria-atomic="true">처리 중입니다...</p>
+                    <button class="secondary" type="button" id="btn-cancel-zip" hidden>취소</button>
+                </div>
             </div>
 
-            <header class="header">
+            <header class="vault-header">
                 <div class="brand">
                     <span class="brand-mark" aria-hidden="true">PD</span>
                     <div class="title-block">
-                        <h1>Print Drive</h1>
-                        <p class="subtle">프린트할 파일을 잠깐 받아가는 곳입니다.</p>
+                        <h1 id="vault-title">Print Drive</h1>
+                        <p>신뢰 기기 · 전체 보관함</p>
                     </div>
                 </div>
-                <div class="header-actions">
-                    <button class="secondary" type="button" id="btn-install" hidden>설치</button>
-                    <button class="secondary" type="button" id="btn-page-qr">QR</button>
-                    <button class="secondary" type="button" id="btn-refresh">새로고침</button>
-                    <button class="secondary" type="button" id="btn-lock">잠금</button>
+                <div class="header-actions" aria-label="보관함 작업">
+                    <details class="overflow-menu">
+                        <summary>더보기</summary>
+                        <div class="overflow-menu-panel">
+                            <button class="secondary" type="button" id="btn-install" hidden>앱으로 설치</button>
+                            <button class="secondary" type="button" id="btn-page-qr">현재 페이지 QR</button>
+                            <button class="secondary" type="button" id="btn-refresh">새로고침</button>
+                        </div>
+                    </details>
+                    <button class="secondary lock-button" type="button" id="btn-lock">보관함 잠금</button>
                 </div>
             </header>
 
-            <section class="controls" aria-label="파일 검색 및 정렬">
+            <nav class="vault-tabs" aria-label="보관함 보기">
+                <span>최근 파일</span>
+                <strong aria-current="page">전체 파일</strong>
+            </nav>
+
+            <section class="controls" aria-label="파일 검색, 정렬 및 선택">
                 <div class="search-row">
-                    <div class="search-box">
-                        <input id="search-input" type="search" placeholder="파일 검색" autocomplete="off">
-                        <button class="ghost icon-only" type="button" id="btn-clear-search" aria-label="검색어 지우기" hidden>지우기</button>
+                    <div class="field-group search-box">
+                        <label for="search-input">파일 검색</label>
+                        <div class="search-input-wrap">
+                            <input id="search-input" type="search" placeholder="파일 이름 검색" autocomplete="off">
+                            <button class="ghost icon-only" type="button" id="btn-clear-search" aria-label="검색어 지우기" hidden>지우기</button>
+                        </div>
                     </div>
-                    <select id="sort-select" aria-label="파일 정렬">
-                        <option value="recent">최근순</option>
-                        <option value="name">이름순</option>
-                        <option value="size">크기순</option>
-                        <option value="extension">확장자순</option>
-                        <option value="api">기본순</option>
-                    </select>
+                    <div class="field-group sort-field">
+                        <label for="sort-select">정렬</label>
+                        <select id="sort-select">
+                            <option value="recent">최근 업데이트순</option>
+                            <option value="name">이름순</option>
+                            <option value="size">크기순</option>
+                            <option value="extension">확장자순</option>
+                            <option value="api">기본순</option>
+                        </select>
+                    </div>
                 </div>
                 <div class="filter-chips" id="filter-chips" role="group" aria-label="파일 타입 필터">
                     <button class="filter-chip active" type="button" data-filter="all" aria-pressed="true">전체</button>
@@ -85,41 +227,76 @@
                     <button class="filter-chip" type="button" data-filter="other" aria-pressed="false">기타</button>
                 </div>
                 <div class="meta-row">
-                    <span id="file-summary">0개 파일 · 0 B · 최근 업데이트 없음</span>
-                    <span id="result-count">0개 표시</span>
+                    <div class="summary-copy">
+                        <span id="file-summary">0개 파일 · 0 B · 최근 업데이트 없음</span>
+                        <strong id="result-count" aria-live="polite">0 / 0개 표시</strong>
+                    </div>
                     <div class="list-tools">
                         <button class="secondary" type="button" id="btn-download-all" disabled>전체 ZIP</button>
-                        <span class="selection-count" id="selected-count" hidden>선택 0개</span>
+                        <span class="selection-count" id="selected-count" aria-live="polite" hidden>선택 0개</span>
                         <button class="secondary selection-toggle" type="button" id="btn-selection-mode">선택</button>
                     </div>
                 </div>
-                <section class="drop-zone" id="drop-zone" aria-label="파일 추가">
-                    <input id="upload-input" type="file" multiple hidden>
-                    <div class="drop-copy">
-                        <strong>파일 추가</strong>
-                        <span id="upload-status">드래그하면 암호화 업데이트 ZIP을 만듭니다.</span>
+            </section>
+
+            <section class="action-bar" aria-label="선택한 파일 작업">
+                <button class="secondary" type="button" id="btn-select-all">전체 선택</button>
+                <button class="secondary" type="button" id="btn-clear-selection" disabled>선택 해제</button>
+                <button type="button" id="btn-download-selected" disabled>선택 ZIP</button>
+            </section>
+
+            <section class="file-browser" aria-labelledby="vault-list-title">
+                <div class="section-heading">
+                    <div>
+                        <p class="eyebrow">배포된 파일</p>
+                        <h2 id="vault-list-title">미리보기하고 인쇄할 파일</h2>
                     </div>
-                    <button class="secondary" type="button" id="btn-upload-pick">파일 선택</button>
-                </section>
+                    <p>지원 형식은 <strong>미리보기·인쇄</strong>가 기본 작업입니다.</p>
+                </div>
+                <ul id="file-list" tabindex="-1" aria-label="파일 목록" aria-busy="false"></ul>
             </section>
 
-            <section class="action-bar" aria-label="선택 작업">
-                <button class="secondary" type="button" id="btn-select-all">전체</button>
-                <button class="secondary" type="button" id="btn-clear-selection" disabled>해제</button>
-                <button type="button" id="btn-download-selected" disabled>선택 ZIP 다운로드</button>
-            </section>
-
-            <ul id="file-list" aria-live="polite" tabindex="-1"></ul>
+            <details class="admin-shell">
+                <summary>
+                    <span>
+                        <strong>관리자용 업데이트 도구</strong>
+                        <small>암호화 업데이트 ZIP 생성 · 아직 업로드되거나 배포되지 않음</small>
+                    </span>
+                    <span aria-hidden="true">열기</span>
+                </summary>
+                <div class="admin-shell-body">
+                    <div class="admin-context">
+                        <span class="admin-badge">관리자 작업</span>
+                        <div>
+                            <h2>업데이트 ZIP 준비</h2>
+                            <p>이 브라우저는 암호화된 업데이트 ZIP만 만듭니다. 업로드, Git 반영, Pages 배포는 별도 작업입니다.</p>
+                        </div>
+                    </div>
+                    <section class="drop-zone" id="drop-zone" aria-label="업데이트할 파일 선택">
+                        <input id="upload-input" type="file" multiple hidden>
+                        <div class="drop-copy">
+                            <strong>관리자용 암호화 업데이트 ZIP 만들기</strong>
+                            <span id="upload-status" role="status" aria-live="polite">파일을 선택하면 암호화 ZIP을 준비합니다 · 아직 미배포</span>
+                        </div>
+                        <button class="secondary" type="button" id="btn-upload-pick">파일 선택</button>
+                    </section>
+                    <div class="admin-boundary" role="note">
+                        <strong>완료 경계</strong>
+                        <p>ZIP 다운로드 요청은 업로드·동기화·배포 완료를 뜻하지 않습니다. 기존에 배포된 파일은 실제 배포가 확인될 때까지 유지됩니다.</p>
+                    </div>
+                </div>
+            </details>
         </section>
 
         <noscript>
-            <p>이 페이지는 암호화된 파일을 복호화하기 위해 JavaScript가 필요합니다.</p>
+            <p class="noscript-message">이 페이지는 암호화된 파일을 복호화하기 위해 JavaScript가 필요합니다.</p>
         </noscript>
     </main>
 
-    <section class="preview-modal" id="preview-modal" role="dialog" aria-modal="true" aria-labelledby="preview-title" hidden>
-        <div class="preview-backdrop" id="preview-backdrop"></div>
-        <div class="preview-panel">
+    <section class="preview-modal" id="preview-modal" role="dialog" aria-modal="true"
+        aria-labelledby="preview-title" aria-describedby="preview-meta" hidden>
+        <div class="preview-backdrop" id="preview-backdrop" aria-hidden="true"></div>
+        <div class="preview-panel" role="document">
             <header class="preview-header">
                 <div>
                     <p class="preview-kicker" id="preview-meta">미리보기</p>
@@ -129,26 +306,28 @@
             </header>
             <div class="preview-body" id="preview-body"></div>
             <footer class="preview-footer">
-                <button type="button" id="btn-preview-download">다운로드</button>
-                <button class="secondary" type="button" id="btn-preview-print">인쇄</button>
-                <button class="secondary" type="button" id="btn-preview-close">닫기</button>
+                <button class="secondary" type="button" id="btn-preview-download">다운로드</button>
+                <button type="button" id="btn-preview-print">인쇄 창 열기</button>
+                <button class="secondary close-emphasis" type="button" id="btn-preview-close">닫기</button>
             </footer>
         </div>
     </section>
 
-    <section class="qr-modal" id="qr-modal" role="dialog" aria-modal="true" aria-labelledby="qr-title" hidden>
-        <div class="qr-backdrop" id="qr-backdrop"></div>
-        <div class="qr-panel">
+    <section class="qr-modal" id="qr-modal" role="dialog" aria-modal="true" aria-labelledby="qr-title"
+        aria-describedby="qr-meta" hidden>
+        <div class="qr-backdrop" id="qr-backdrop" aria-hidden="true"></div>
+        <div class="qr-panel" role="document">
             <header class="qr-header">
                 <div>
-                    <p class="preview-kicker" id="qr-meta">QR 공유</p>
-                    <h2 id="qr-title">현재 페이지 QR</h2>
+                    <p class="preview-kicker" id="qr-meta">공유 링크 정보를 확인하는 중입니다</p>
+                    <h2 id="qr-title">공유 링크 QR</h2>
                 </div>
                 <button class="secondary icon-only" type="button" id="btn-qr-close-top" aria-label="QR 닫기">닫기</button>
             </header>
             <div class="qr-body">
-                <canvas id="qr-canvas" width="280" height="280"></canvas>
+                <canvas id="qr-canvas" width="280" height="280" aria-label="링크 QR 코드"></canvas>
                 <p id="qr-link" class="qr-link"></p>
+                <p class="truth-note">v2 링크 자체가 선택 파일의 접근 권한이므로 신뢰 채널로만 전달하세요. QR은 링크 길이에 따라 만들지 못할 수 있으며 그때는 복사를 사용합니다. master key는 포함하지 않습니다. 이전 위치 링크 QR은 전체 보관함 비밀번호가 필요합니다. 정적 호스팅은 두 링크의 만료·사용 횟수를 서버에서 강제하지 못합니다.</p>
             </div>
             <footer class="qr-footer">
                 <button type="button" id="btn-qr-copy">링크 복사</button>
@@ -157,7 +336,6 @@
         </div>
     </section>
 
-    <script type="module" src="app.js"></script>
 </body>
 
 </html>

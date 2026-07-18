@@ -1,0 +1,7 @@
+{
+  "sourceDirectory": "D:/PrintDrive-Inbox",
+  "encryptedOutputDirectory": "./files",
+  "autoSync": true,
+  "allowedBranch": "main",
+  "remote": "origin"
+}

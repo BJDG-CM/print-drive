@@ -1,6 +1,10 @@
 const zipTextEncoder = new TextEncoder();
+const MAX_ZIP_ENTRIES = 5000;
+const MAX_ZIP_TOTAL_BYTES = 512 * 1024 * 1024;
+const MAX_ZIP_NAME_BYTES = 1024;
 
 export function createZipBlob(entries) {
+    const safeEntries = validateZipEntries(entries);
     const localParts = [];
     const centralParts = [];
     let offset = 0;
@@ -8,8 +12,8 @@ export function createZipBlob(entries) {
     const dosTime = ((now.getHours() & 31) << 11) | ((now.getMinutes() & 63) << 5) | ((Math.floor(now.getSeconds() / 2)) & 31);
     const dosDate = (((now.getFullYear() - 1980) & 127) << 9) | (((now.getMonth() + 1) & 15) << 5) | (now.getDate() & 31);
 
-    entries.forEach((entry) => {
-        const nameBytes = zipTextEncoder.encode(entry.name.replace(/\\/g, '/'));
+    safeEntries.forEach((entry) => {
+        const nameBytes = zipTextEncoder.encode(entry.name);
         const data = entry.bytes instanceof Uint8Array ? entry.bytes : new Uint8Array(entry.bytes);
         if (data.byteLength > 0xffffffff || offset > 0xffffffff) {
             throw new Error('ZIP64가 필요한 큰 파일은 지원하지 않습니다.');
@@ -66,13 +70,65 @@ export function createZipBlob(entries) {
     endView.setUint32(0, 0x06054b50, true);
     endView.setUint16(4, 0, true);
     endView.setUint16(6, 0, true);
-    endView.setUint16(8, entries.length, true);
-    endView.setUint16(10, entries.length, true);
+    endView.setUint16(8, safeEntries.length, true);
+    endView.setUint16(10, safeEntries.length, true);
     endView.setUint32(12, centralSize, true);
     endView.setUint32(16, centralOffset, true);
     endView.setUint16(20, 0, true);
 
     return new Blob([...localParts, ...centralParts, endHeader], { type: 'application/zip' });
+}
+
+export function validateZipEntries(entries) {
+    if (!Array.isArray(entries)) {
+        throw new TypeError('ZIP 항목 목록이 올바르지 않습니다.');
+    }
+    if (entries.length > MAX_ZIP_ENTRIES) {
+        throw new Error(`ZIP에는 최대 ${MAX_ZIP_ENTRIES}개 파일만 포함할 수 있습니다.`);
+    }
+
+    const seen = new Set();
+    let totalBytes = 0;
+
+    return entries.map((entry) => {
+        if (!entry || typeof entry.name !== 'string') {
+            throw new TypeError('ZIP 파일 이름이 올바르지 않습니다.');
+        }
+
+        const name = entry.name.normalize('NFC').replace(/\\/g, '/');
+        const nameBytes = zipTextEncoder.encode(name);
+        const segments = name.split('/');
+        const hasUnsafeSegment = segments.some((segment) => (
+            segment === '' || segment === '.' || segment === '..'
+        ));
+
+        if (
+            !name ||
+            name.startsWith('/') ||
+            /^[A-Za-z]:/.test(name) ||
+            hasUnsafeSegment ||
+            /[\u0000-\u001f\u007f]/.test(name) ||
+            nameBytes.byteLength > MAX_ZIP_NAME_BYTES
+        ) {
+            throw new Error(`안전하지 않은 ZIP 파일 이름입니다: ${entry.name}`);
+        }
+
+        const duplicateKey = name.toLocaleLowerCase('en-US');
+        if (seen.has(duplicateKey)) {
+            throw new Error(`중복된 ZIP 파일 이름입니다: ${name}`);
+        }
+        seen.add(duplicateKey);
+
+        const data = entry.bytes instanceof Uint8Array
+            ? entry.bytes
+            : new Uint8Array(entry.bytes);
+        totalBytes += data.byteLength;
+        if (totalBytes > MAX_ZIP_TOTAL_BYTES) {
+            throw new Error('ZIP의 전체 평문 크기는 512MB를 넘을 수 없습니다.');
+        }
+
+        return { ...entry, name, bytes: data };
+    });
 }
 
 function writeZipHeader(view, header) {
