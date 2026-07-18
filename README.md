@@ -16,6 +16,8 @@ npm ci --ignore-scripts
 python -m pip install -r requirements.txt
 ```
 
+평소 흐름은 `source 폴더 설정 → 암호화/동기화 실행 → 사이트 열기 → 잠금 해제 → 미리보기 또는 인쇄`입니다. 일반 주소는 별도 모드 선택 없이 비밀번호 화면으로 바로 열리고, 선택 파일 공유 주소는 전체 파일 비밀번호 화면을 거치지 않습니다.
+
 ## 1. 로컬 설정
 
 원본 source는 외부 절대경로를 사용할 수 있습니다. 암호문 output은 저장소 내부여야 하며 저장소 root, `dist`, `.git`, `node_modules`, source와 동일하거나 중첩된 경로는 거부됩니다. Git에서 ignore되는 경로를 output으로 사용하면 자동 commit되지 않으므로 `files` 같은 tracked 경로를 사용하세요.
@@ -71,6 +73,8 @@ node encrypt_files.mjs --init-passphrase
 node encrypt_files.mjs --migrate-v1
 ```
 
+이 저장소에서 추적하는 production vault는 2026-07-18에 기존 transactional 명령으로 v2 migration과 전체 검증을 완료했습니다.
+
 v2는 passphrase에서 만든 key-encryption key, random vault master key, per-file data key를 분리합니다. 변경되지 않은 파일 object는 재사용되며 password rotation은 file blob을 다시 암호화하지 않습니다.
 
 ```powershell
@@ -93,6 +97,13 @@ git push origin main
 
 v2 encryption은 fingerprint가 같은 object를 재사용하고, 새 manifest를 검증한 후 publish하며, publish가 성공한 뒤 unreferenced blob을 정리합니다. 중간 실패 시 기존 정상 manifest가 기준점으로 남습니다.
 
+`.print-drive-state.json`은 Git에서 제외된 로컬 change-detection cache입니다. 파일 내용이나 key를 저장하지 않으며, 파일 metadata와 이전 SHA-256·manifest 매핑만 보관합니다. vault identity/revision 또는 schema가 맞지 않으면 자동으로 안전한 전체 source scan을 수행합니다.
+
+```powershell
+node encrypt_files.mjs --full-scan   # 모든 source 파일 다시 hash
+node encrypt_files.mjs --verify-all  # 모든 참조 blob 복호·인증
+```
+
 자동 감시:
 
 ```powershell
@@ -112,9 +123,20 @@ python auto_sync.py
 
 상세 운영과 복구는 `docs/OPERATIONS.md`, `docs/RECOVERY.md`에 있습니다.
 
-## 4. 브라우저 업데이트 ZIP
+## 4. 브라우저 업데이트 패키지
 
-잠금 해제된 신뢰 기기에서 파일 추가 기능을 사용하면 암호화 update ZIP을 만들 수 있습니다. ZIP은 저장소에 직접 쓰거나 GitHub token을 보관하지 않습니다. 생성된 update는 신뢰 기기에서 검토·적용한 뒤 public guard와 테스트를 통과시켜 배포해야 합니다.
+잠금 해제 뒤 `더보기 → 관리`에서 암호화 update ZIP을 만들 수 있습니다. ZIP은 저장소에 직접 쓰거나 GitHub token을 보관하지 않습니다. `print-drive-update.json`, 대상 `manifest.enc`, 새 immutable object만 포함하며 교체된 object는 제거 목록에 기록됩니다.
+
+```powershell
+npm run update:check -- "C:/Downloads/Print_Drive_Encrypted_Update.zip"
+npm run update:apply -- "C:/Downloads/Print_Drive_Encrypted_Update.zip"
+node check_public_files.mjs
+git add -A -- files
+git commit -m "Update encrypted print files" -- files
+git push origin main
+```
+
+`update:check`는 아무것도 바꾸지 않습니다. `update:apply`는 writer lock 아래에서 package schema, 경로, vault/revision, target object set, 크기와 SHA-256을 다시 확인하고 새 object와 manifest를 원자적으로 반영한 뒤 명시적으로 unreferenced가 된 object만 제거합니다. passphrase를 찾으면 target manifest와 새 object도 인증합니다. 패키지 생성·다운로드 자체는 적용이나 배포가 아닙니다.
 
 공용 기기에는 전체 vault passphrase를 입력하지 않는 제한 공유 capability 흐름을 우선합니다. URL fragment의 capability는 서버로 전송되지 않지만, 정적 호스팅만으로 강제 만료·횟수 제한·회수를 보장할 수는 없습니다.
 
@@ -133,7 +155,7 @@ npm run benchmark
 - `npm run check`: JavaScript/Python syntax, workflow SHA pin, tracked/history path leak, public output allowlist와 v2 object integrity를 검사합니다.
 - `npm test`: browser/security/crypto test, synthetic temporary Git 장애 주입, encryption smoke test를 실행합니다.
 - `npm run build`: 외부 CSS와 bootstrap을 포함한 local JavaScript dependency graph를 그대로 복사하고 검증된 artifact를 임시 디렉터리에서 만든 뒤 `dist`를 교체합니다.
-- `npm run benchmark`: v2의 100-file 증분 변경, rotation, 101 MiB file 시간·변경량·process high-water RSS를 측정합니다. v1 비교 결과와 해석은 `docs/PERFORMANCE.md`에 있습니다.
+- `npm run benchmark`: v2의 100-file 증분 변경·전체 audit·rotation과 100 MiB 파일의 시간, source read, 복호화 수, sampled peak RSS를 측정합니다. 결과와 해석은 `docs/PERFORMANCE.md`에 있습니다.
 - v2 build는 strict envelope schema와 `objectIndex.version=1`의 path, size, ciphertext SHA-256을 실제 blob과 확인하고 참조된 object만 배포합니다.
 - legacy v1에는 공개 object index가 없어 manifest-to-blob 참조를 증명할 수 없습니다. 호환 build는 target stale 파일은 제거하지만 source blob 전부를 복사하므로 가능한 빨리 v2로 migration해야 합니다.
 
@@ -146,7 +168,7 @@ Pull request는 verify, dependency review, CodeQL을 실행합니다. `main` dep
 저장소 관리자가 GitHub UI에서 수동으로 설정해야 할 항목:
 
 1. Pages source를 **GitHub Actions**로 선택
-2. `main` branch protection에서 verify, CodeQL, dependency review를 required check로 지정
+2. Dependency graph를 활성화한 저장소에서만 dependency review를 required check로 지정. 비활성 상태에서는 GitHub가 `Dependency review is not supported`로 실패합니다.
 3. GitHub Advanced Security를 사용할 수 있다면 secret scanning과 push protection 활성화
 4. `github-pages` environment에 필요한 reviewer/branch protection 적용
 5. workflow가 요청하지 않은 write permission을 받지 않도록 default workflow permission을 read-only로 설정

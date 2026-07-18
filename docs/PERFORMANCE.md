@@ -1,21 +1,27 @@
 # Performance validation
 
-2026-07-18에 Windows, Node 24, OneDrive workspace에서 synthetic data로 측정했습니다. 두 구현 모두 PBKDF2 200,000회와 padding 0을 사용했습니다. v1은 이 작업 branch의 부모 commit 구현을 격리 clone에서 실행했고, v2는 `npm run benchmark`를 실행했습니다. 시간은 filesystem, antivirus, OneDrive 상태에 민감하므로 상대적인 암호문 churn과 upload proxy를 우선해서 봅니다.
+2026-07-18 Windows, Node 24, OneDrive workspace에서 `npm run benchmark`로 측정했습니다. Synthetic vault는 PBKDF2 200,000회와 padding 0을 사용했습니다. 시간과 RSS는 filesystem, antivirus, process GC 상태에 민감합니다. `peak RSS`는 각 scenario 실행 중 5ms 간격으로 관측한 process RSS이며, 같은 process를 재사용하므로 앞 scenario가 확보한 memory가 남을 수 있습니다.
 
-`transfer proxy`는 새/변경 immutable blob과 새 `manifest.enc` bytes의 합이며 Git pack compression, 삭제 전달 비용과 실제 네트워크 protocol은 모델링하지 않습니다. `manifest.enc changed`는 encrypted manifest body만이 아니라 공개 envelope/key slot을 포함한 파일 전체 hash입니다. RSS는 scenario별 독립 peak가 아니라 각 process의 누적 high-water mark입니다.
+`source bytes`는 hash와 변경 파일 암호화를 위해 읽은 bytes의 합입니다. 따라서 최초/변경 암호화는 현재 source를 두 번 읽고, fast-path no-op은 읽지 않습니다. `manifest`는 encrypted envelope byte 변경 여부입니다.
 
-| scenario | v1 ms | v1 changed blobs | v1 transfer proxy | v2 ms | v2 changed blobs | v2 transfer proxy |
-|---|---:|---:|---:|---:|---:|---:|
-| initial 100 | 3214.4 | 100 | 462,701 B | 3869.6 | 100 | 520,384 B |
-| no-op 100 | 1754.6 | 100 | 462,701 B | 551.0 | 0 | 0 B |
-| modify 1/100 | 484.6 | 100 | 466,755 B | 1492.3 | 1 | 112,442 B |
-| add 1 | 531.9 | 101 | 472,231 B | 3463.9 | 1 | 110,279 B |
-| delete 1 | 530.6 | 100 | 467,652 B | 2875.7 | 0 | 104,234 B |
-| rename 1 | 2546.2 | 100 | 467,656 B | 3238.4 | 0 | 104,238 B |
-| password rotation | 461.3 | 100 | 467,656 B | 420.6 | 0 | 104,238 B |
-| initial 101 MiB | 1303.1 | 1 | 105,907,239 B | 7586.9 | 1 | 105,908,519 B |
-| no-op 101 MiB | 344.8 | 1 | 105,907,239 B | 416.2 | 0 | 0 B |
+| scenario | ms | source hashed | source bytes | blobs decrypted | new blobs | manifest | peak RSS |
+|---|---:|---:|---:|---:|---:|---|---:|
+| initial 100 | 2,558.0 | 100 | 829,100 | 100 | 100 | changed | 115,773,440 B |
+| no-op 100 | 315.9 | 0 | 0 | 0 | 0 | same | 56,893,440 B |
+| modify 1/100 | 259.4 | 1 | 16,384 | 1 | 1 | changed | 97,988,608 B |
+| add 1 | 279.5 | 1 | 10,000 | 1 | 1 | changed | 128,765,952 B |
+| delete 1 | 314.4 | 0 | 0 | 0 | 0 | changed | 106,459,136 B |
+| rename 1 | 255.0 | 1 | 4,104 | 0 | 0 | changed | 102,002,688 B |
+| password rotation | 208.5 | 0 | 0 | 0 | 0 | changed | 60,989,440 B |
+| full audit 100 | 250.1 | 100 | 419,501 | 100 | 0 | same | 129,343,488 B |
+| initial 100 MiB | 1,379.6 | 1 | 209,715,200 | 1 | 1 | changed | 479,178,752 B |
+| no-op 100 MiB | 58.4 | 0 | 0 | 0 | 0 | same | 376,602,624 B |
+| modify 100 MiB | 3,048.5 | 1 | 209,715,200 | 1 | 1 | changed | 476,725,248 B |
 
-전체 run의 process high-water RSS는 v1 465,244 KiB, v2 573,812 KiB였습니다. v2는 source fingerprint를 1 MiB chunk로 hash하고 여러 source bytes를 한꺼번에 보관하지 않지만, 101 MiB object의 AES-GCM 암호화와 두 번의 완전 검증은 여전히 큰 Buffer를 사용합니다. 따라서 100 MiB+ 처리 성능과 memory는 남은 개선 항목이며, 현재 512 MiB format 상한을 “저사양 기기에서 안전한 운용 크기”로 해석하면 안 됩니다.
+핵심 합격 결과는 100-file no-op에서 full source hash 0, source read 0 B, blob decrypt 0, new blob 0, manifest byte 변경 없음입니다. 한 파일 수정은 full source hash 1, new blob 1, unchanged blob 99입니다. 삭제는 source read 없이 manifest와 object 집합만 바꾸고, rename은 새 이름의 source 하나를 hash한 뒤 기존 immutable blob을 재사용합니다. `--full-scan --verify-all`은 source 100개와 blob 100개를 명시적으로 audit하면서 manifest를 바꾸지 않았습니다.
 
-핵심 합격 결과는 v2 no-op upload proxy 0, 100개 중 1개 수정 시 새 blob 1개, add 시 새 blob 1개, delete/rename 시 새 blob 0개, password rotation 시 blob 0개입니다. 그 대가로 durable staging, fsync, 전체 인증 검증 때문에 일부 작은 변경의 wall time은 v1보다 길었습니다.
+## Large-file limitation
+
+v2 format과 transactional writer를 유지한 채 AES-GCM streaming을 도입하려면 AAD metadata 확정, padding, ciphertext hash, durable temporary file과 pre-commit authentication 경계를 함께 바꿔야 합니다. 이번 pass에서는 format 안정성을 우선해 streaming rewrite를 하지 않았습니다. Source는 1MiB chunk로 hash하고 파일을 한 번에 하나씩 처리하지만, 변경된 큰 파일은 암호화와 인증 중 source/ciphertext/plaintext Buffer가 겹칩니다. 실제 100 MiB initial/modify sampled peak RSS는 약 479 MB/477 MB였습니다.
+
+따라서 512 MiB format 상한은 저사양 기기의 권장 운용 크기가 아닙니다. 큰 파일은 충분한 memory가 있는 신뢰 기기에서 처리하고, browser update/decrypt의 보수적 256 MiB 상한을 유지합니다. 후속 streaming 작업은 v2 byte interoperability와 transaction failpoint test를 먼저 고정한 별도 변경으로 다뤄야 합니다.

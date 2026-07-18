@@ -36,3 +36,39 @@ test('modals expose dialog semantics and public-exit copy names unmanaged traces
     assert.match(html, /운영체제 최근 파일과 프린터·인쇄 대기열 기록|OS 최근 파일, 프린터 기록/);
     assert.doesNotMatch(html, /흔적을 (?:완전히 )?지웠|인쇄 완료/);
 });
+
+test('entry routes open unlock directly while share and legacy links keep distinct handling', () => {
+    assert.doesNotMatch(html, /mode-select-view|어떻게 파일을 열까요/);
+    assert.match(app, /if \(initialShareFragment\) \{[\s\S]*initializePublicShare\(initialShareFragment\)[\s\S]*return;/);
+    assert.match(app, /if \(location\.hash\.startsWith\('#file='\)\) \{[\s\S]*showVaultUnlock\(\{ legacyLink: true \}\)/);
+    assert.match(app, /showVaultUnlock\(\);\s*\n\}/);
+    assert.match(html, /id="legacy-link-warning"[^>]*hidden>이전 형식의 파일 링크/);
+    assert.match(html, /공용 기기에서는 전체 파일 비밀번호를 입력하지 마세요/);
+    assert.match(bootstrap, /pendingShareFragment = location\.hash/);
+    assert.match(bootstrap, /history\.replaceState/);
+});
+
+test('recent and all are real accessible views and search bypasses the recent limit', () => {
+    assert.match(html, /role="tablist"/);
+    assert.match(html, /role="tab"[^>]*id="tab-recent"[^>]*aria-selected="false"/);
+    assert.match(html, /role="tab"[^>]*id="tab-all"[^>]*aria-selected="true"/);
+    assert.match(app, /!query && activeFileView === 'recent'/);
+    assert.match(app, /matchingFiles\.slice\(0, 10\)/);
+    assert.match(app, /visibleFiles = matchingFiles\.sort\(compareFilesBy\(sortBy\)\)/);
+    assert.match(app, /\['ArrowLeft', 'ArrowRight', 'Home', 'End'\]/);
+    assert.match(app, /tab\.setAttribute\('aria-selected', String\(selected\)\)/);
+});
+
+test('management package creation is separated and uses accurate local-apply labels', () => {
+    assert.match(html, /id="btn-management">관리<\/button>/);
+    assert.match(html, /id="management-view"[^>]*hidden/);
+    assert.match(html, /id="btn-management-back">← 파일 목록<\/button>/);
+    assert.match(app, /dom\.vaultContent\.hidden = true;[\s\S]*dom\.managementView\.hidden = false/);
+    const management = html.slice(html.indexOf('id="management-view"'), html.indexOf('</section>\n        </section>', html.indexOf('id="management-view"')));
+    assert.doesNotMatch(management, /업로드|배포/);
+    assert.match(management, /npm run update:check/);
+    assert.match(management, /npm run update:apply/);
+    assert.match(app, /업데이트 패키지 다운로드 요청됨 · 아직 적용되지 않음/);
+    assert.match(app, /name: 'print-drive-update\.json'/);
+    assert.doesNotMatch(html, /capability|master key|key slot|object index|envelope|\bv[12]\b/i);
+});

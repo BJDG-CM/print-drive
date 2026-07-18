@@ -37,6 +37,26 @@ git push origin main
 
 output path를 `files`가 아닌 저장소 내부 경로로 설정했다면 Git path도 그 설정값을 사용한다. build는 configured output을 Pages의 `dist/files`에 매핑하므로 browser URL은 계속 `files/...`이다.
 
+정상 실행은 `.print-drive-state.json`의 filename, size, high-resolution mtime, 가능한 filesystem identity가 일치하는 파일의 SHA-256을 재사용한다. 이 파일은 Git ignored이며 key·passphrase·평문을 포함하지 않는다. 손상되거나 manifest ID/revision과 불일치하면 전체 source scan으로 돌아간다.
+
+```powershell
+node encrypt_files.mjs --full-scan
+node encrypt_files.mjs --verify-all
+```
+
+첫 명령은 source 전체를 다시 hash하고 state를 원자 교체한다. 둘째 명령은 참조 blob 전체를 복호·인증한다. 정기 audit에서는 둘을 함께 사용한다.
+
+## 브라우저 업데이트 패키지 적용
+
+```powershell
+npm run update:check -- "C:/Downloads/Print_Drive_Encrypted_Update.zip"
+npm run update:apply -- "C:/Downloads/Print_Drive_Encrypted_Update.zip"
+node check_public_files.mjs
+git status --short
+```
+
+dry-run은 ZIP의 중복·unknown entry·traversal·symlink, exact metadata schema, vault ID, base/target revision, add/remove 집합, target object index, object size/hash를 검사하고 아무것도 쓰지 않는다. apply는 같은 검사를 writer lock 안에서 반복하고 transaction directory에 새 object를 durable write한 뒤 object → manifest → 명시된 이전 object 제거 순서로 반영한다. manifest commit 전 실패는 이번 실행이 만든 object를 rollback한다. commit 후 실패는 같은 ZIP을 다시 apply해 정리를 재개할 수 있다. 이 명령은 Git stage, commit, push를 실행하지 않는다.
+
 ## 자동 감시
 
 ```powershell
@@ -87,7 +107,7 @@ v1은 encrypted manifest 밖에서 참조 집합을 알 수 없다. legacy build
 
 ## CI 운영
 
-- PR: verify, CodeQL, dependency review
+- PR: verify, CodeQL, dependency review(Dependency graph가 활성화된 저장소만 지원)
 - main: unprivileged verify/build와 privileged Pages deploy 분리
 - action reference: full 40-character commit SHA
 - checkout: `persist-credentials: false`

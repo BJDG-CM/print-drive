@@ -556,7 +556,7 @@ async function readSourceFiles(sourceDir, options = {}) {
     return files;
 }
 
-async function hashStableSourceFile(absolutePath, before, displayName, stats) {
+export async function hashStableSourceFile(absolutePath, before, displayName, stats) {
     const handle = await open(absolutePath, 'r');
     const hash = createHash('sha256');
     const chunk = Buffer.allocUnsafe(1024 * 1024);

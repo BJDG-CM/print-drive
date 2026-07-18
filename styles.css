@@ -442,6 +442,13 @@ code {
 .auth-panel {
     justify-items: center;
     width: min(100%, 470px);
+    max-width: 100%;
+}
+
+.auth-panel > *,
+.password-row > * {
+    min-width: 0;
+    max-width: 100%;
 }
 
 .legacy-link-warning,
@@ -1619,6 +1626,11 @@ code {
     .password-row button,
     .drop-zone button {
         width: 100%;
+    }
+
+    .auth-panel {
+        width: 100%;
+        max-width: calc(100vw - 2rem);
     }
 
     .public-header,

@@ -866,7 +866,7 @@ async function expirePublicCapability() {
     }
     showView(dom.publicShareView);
     dom.publicFileName.textContent = '표시상 유효 시간이 지난 링크입니다';
-    dom.publicFileMeta.textContent = '정적 호스팅은 서버 만료를 강제하지 못하지만, 이 앱은 만료 시 메모리 key와 미리보기를 정리합니다.';
+    dom.publicFileMeta.textContent = '표시된 유효 시간이 지나 파일을 닫고 이 앱의 임시 데이터를 정리했습니다.';
     dom.publicPreviewBody.replaceChildren(createStatusMessage('신뢰 기기에서 새 제한 공유 링크를 만드세요.', 'error'));
     dom.publicPrintButton.disabled = true;
     dom.publicDownloadButton.disabled = true;
@@ -2318,7 +2318,7 @@ async function showFileShareModal(file, opener) {
             showQrModal(
                 `${file.displayName} 위치 QR`,
                 createFileAppLink(file),
-                'v1 파일 위치 링크 · 전체 보관함 비밀번호 필요 · 만료 강제 불가'
+                '이전 형식의 파일 위치 링크 · 전체 파일 비밀번호 필요'
             );
             return;
         }
@@ -2340,7 +2340,7 @@ async function showFileShareModal(file, opener) {
         showQrModal(
             `${file.displayName} 제한 공유`,
             link,
-            '링크 자체가 선택 파일 접근 권한 · 신뢰 채널로만 전달 · 앱 표시 만료 30분 · 서버 강제 만료/회수/횟수 제한 없음'
+            '이 링크를 가진 사람은 선택한 파일을 열 수 있습니다 · 신뢰 채널로만 전달 · 표시 유효 시간 30분'
         );
         } finally {
             dataKeyBytes.fill(0);
@@ -2480,6 +2480,7 @@ function lockDrive(options = {}) {
     dom.managementView.hidden = true;
     dom.vaultContent.hidden = false;
     dom.passwordInput.value = '';
+    dom.legacyLinkWarning.hidden = true;
     if (location.hash) {
         history.replaceState(null, '', `${location.pathname}${location.search}`);
     }
