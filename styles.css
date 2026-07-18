@@ -444,6 +444,33 @@ code {
     width: min(100%, 470px);
 }
 
+.legacy-link-warning,
+.public-password-warning {
+    width: 100%;
+    margin: 0;
+    border-radius: var(--radius-sm);
+    padding: 0.75rem 0.9rem;
+    color: var(--warning);
+    background: var(--warning-soft);
+    font-size: 0.85rem;
+    font-weight: 750;
+}
+
+.auth-help {
+    width: 100%;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.auth-help > summary {
+    cursor: pointer;
+    font-weight: 750;
+}
+
+.auth-help p {
+    margin: 0.5rem 0 0;
+}
+
 .password-form {
     display: grid;
     gap: 0.9rem;
@@ -766,18 +793,31 @@ code {
     color: var(--text-muted);
 }
 
-.vault-tabs strong {
+.vault-tabs button {
     align-self: stretch;
     display: inline-flex;
     align-items: center;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+    color: var(--text-muted);
+    background: transparent;
+    box-shadow: none;
+}
+
+.vault-tabs button:hover:not(:disabled) {
+    color: var(--primary-soft-text);
+    background: transparent;
+}
+
+.vault-tabs button[aria-selected="true"] {
     color: var(--primary-soft-text);
     border-bottom: 3px solid var(--primary);
 }
 
 .controls,
 .file-browser,
-.action-bar,
-.admin-shell {
+.action-bar {
     margin-inline: 1.35rem;
 }
 
@@ -1171,40 +1211,28 @@ code {
     overflow-wrap: anywhere;
 }
 
-.admin-shell {
-    margin-top: 1.5rem;
-    overflow: hidden;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    background: var(--surface);
-}
-
-.admin-shell > summary {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    padding: 0.9rem 1rem;
-    color: var(--admin-text);
-    background: var(--admin-bg);
-    cursor: pointer;
-    list-style: none;
-}
-
-.admin-shell > summary > span:first-child {
+.management-view {
     display: grid;
-    gap: 0.15rem;
+    align-content: start;
+    gap: 1rem;
+    min-height: 520px;
+    padding: 1.35rem;
+    background: var(--surface-muted);
 }
 
-.admin-shell > summary small {
-    color: var(--admin-muted);
-    font-weight: 600;
+.management-back {
+    position: static;
+    justify-self: start;
 }
 
 .admin-shell-body {
     display: grid;
     gap: 1rem;
+    width: min(100%, 760px);
     padding: 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
 }
 
 .admin-context {
@@ -1617,8 +1645,7 @@ code {
     .vault-tabs,
     .controls,
     .file-browser,
-    .action-bar,
-    .admin-shell {
+    .action-bar {
         margin-inline: 1rem;
     }
 
@@ -1680,8 +1707,12 @@ code {
         display: grid;
     }
 
-    .admin-shell > summary {
-        align-items: flex-start;
+    .management-view {
+        padding: 1rem;
+    }
+
+    .admin-shell-body {
+        padding: 0.85rem;
     }
 
     .public-file-layout {

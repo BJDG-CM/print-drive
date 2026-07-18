@@ -80,6 +80,7 @@ let overlayRestoreFocus = null;
 let restorePublicExitAfterBfcache = false;
 let restoreTrustedLockAfterBfcache = false;
 let activeFilter = 'all';
+let activeFileView = 'all';
 let lastSelectedId = null;
 let isZipRunning = false;
 let zipCancelRequested = false;
@@ -112,13 +113,8 @@ const appTextEncoder = new TextEncoder();
 
 const dom = {
     appRoot: document.getElementById('app-root'),
-    modeSelectView: document.getElementById('mode-select-view'),
-    shareHelpView: document.getElementById('share-help-view'),
-    modeVaultButton: document.getElementById('btn-mode-vault'),
-    modeShareHelpButton: document.getElementById('btn-mode-share-help'),
-    backModeButton: document.getElementById('btn-back-mode'),
-    shareHelpBackButton: document.getElementById('btn-share-help-back'),
     authView: document.getElementById('auth-view'),
+    legacyLinkWarning: document.getElementById('legacy-link-warning'),
     loadingView: document.getElementById('loading-view'),
     loadingDetail: document.getElementById('loading-detail'),
     appView: document.getElementById('app-view'),
@@ -143,6 +139,12 @@ const dom = {
     refreshButton: document.getElementById('btn-refresh'),
     pageQrButton: document.getElementById('btn-page-qr'),
     installButton: document.getElementById('btn-install'),
+    managementButton: document.getElementById('btn-management'),
+    managementBackButton: document.getElementById('btn-management-back'),
+    managementView: document.getElementById('management-view'),
+    vaultContent: document.getElementById('vault-content'),
+    recentTab: document.getElementById('tab-recent'),
+    allTab: document.getElementById('tab-all'),
     lockButton: document.getElementById('btn-lock'),
     searchInput: document.getElementById('search-input'),
     clearSearchButton: document.getElementById('btn-clear-search'),
@@ -207,7 +209,7 @@ function init() {
     setButtonContent(dom.selectAllButton, 'check', '전체');
     setButtonContent(dom.clearSelectionButton, 'x', '해제');
     setButtonContent(dom.allZipButton, 'download', '전체 ZIP');
-    setButtonContent(dom.uploadPickButton, 'upload', '파일 선택');
+    setButtonContent(dom.uploadPickButton, 'plus', '파일 선택');
     setButtonContent(dom.zipButton, 'download', '선택 ZIP 다운로드');
     setButtonContent(dom.cancelZipButton, 'x', '취소');
     setButtonContent(dom.previewDownloadButton, 'download', '다운로드');
@@ -226,7 +228,7 @@ function init() {
     }
 
     if (!window.crypto?.subtle) {
-        showView(dom.authView);
+        showVaultUnlock();
         showAuthError('이 브라우저는 Web Crypto API를 지원하지 않습니다.');
         dom.authSubmit.disabled = true;
         return;
@@ -239,31 +241,27 @@ function init() {
     }
 
     if (location.hash.startsWith('#file=')) {
-        showVaultUnlock();
-        showAuthError('이 v1 위치 링크는 전체 보관함 비밀번호가 필요합니다. 공용 기기에는 master password를 입력하지 마세요.');
+        showVaultUnlock({ legacyLink: true });
         return;
     }
 
-    showView(dom.modeSelectView);
-    dom.modeVaultButton.focus();
+    showVaultUnlock();
 }
 
 function bindEvents() {
-    dom.modeVaultButton.addEventListener('click', showVaultUnlock);
-    dom.modeShareHelpButton.addEventListener('click', () => {
-        showView(dom.shareHelpView);
-        focusViewHeading(dom.shareHelpView);
-    });
-    dom.backModeButton.addEventListener('click', showModeSelect);
-    dom.shareHelpBackButton.addEventListener('click', showModeSelect);
     dom.publicPrintButton.addEventListener('click', printPublicFile);
     dom.publicDownloadButton.addEventListener('click', downloadPublicFile);
     dom.publicExitButton.addEventListener('click', endPublicSession);
-    dom.publicExitDoneButton.addEventListener('click', showModeSelect);
+    dom.publicExitDoneButton.addEventListener('click', () => showVaultUnlock());
     dom.passwordForm.addEventListener('submit', handlePasswordSubmit);
     dom.refreshButton.addEventListener('click', () => reloadEncryptedManifest({ manual: true }));
     dom.pageQrButton.addEventListener('click', () => showQrModal('현재 페이지 QR', getCurrentPageLink(), '현재 페이지'));
     dom.lockButton.addEventListener('click', () => lockDrive());
+    dom.managementButton.addEventListener('click', showManagementView);
+    dom.managementBackButton.addEventListener('click', showVaultContent);
+    dom.recentTab.addEventListener('click', () => setActiveFileView('recent'));
+    dom.allTab.addEventListener('click', () => setActiveFileView('all'));
+    [dom.recentTab, dom.allTab].forEach((tab) => tab.addEventListener('keydown', handleViewTabKeydown));
     dom.searchInput.addEventListener('input', applyFilters);
     dom.clearSearchButton.addEventListener('click', clearSearch);
     dom.filterChips.addEventListener('click', handleFilterClick);
@@ -382,15 +380,50 @@ function handlePageShow(event) {
     }
 }
 
-function showModeSelect() {
-    showView(dom.modeSelectView);
-    dom.modeVaultButton.focus();
-}
-
-function showVaultUnlock() {
+function showVaultUnlock(options = {}) {
     hideAuthError();
+    dom.legacyLinkWarning.hidden = !options.legacyLink;
     showView(dom.authView);
     dom.passwordInput.focus();
+}
+
+function showManagementView() {
+    if (!decryptKey) {
+        showVaultUnlock();
+        return;
+    }
+    dom.managementButton.closest('details')?.removeAttribute('open');
+    dom.vaultContent.hidden = true;
+    dom.managementView.hidden = false;
+    focusViewHeading(dom.managementView);
+}
+
+function showVaultContent() {
+    dom.managementView.hidden = true;
+    dom.vaultContent.hidden = false;
+    dom.managementButton.focus({ preventScroll: true });
+}
+
+function handleViewTabKeydown(event) {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+        return;
+    }
+    event.preventDefault();
+    const nextView = event.key === 'ArrowLeft' || event.key === 'Home' ? 'recent' : 'all';
+    setActiveFileView(nextView, { focus: true });
+}
+
+function setActiveFileView(view, options = {}) {
+    activeFileView = view === 'recent' ? 'recent' : 'all';
+    [[dom.recentTab, 'recent'], [dom.allTab, 'all']].forEach(([tab, value]) => {
+        const selected = value === activeFileView;
+        tab.setAttribute('aria-selected', String(selected));
+        tab.tabIndex = selected ? 0 : -1;
+        if (selected && options.focus) {
+            tab.focus();
+        }
+    });
+    applyFilters();
 }
 
 function parseStoredSession(value) {
@@ -467,9 +500,9 @@ async function initializePublicShare(fragment) {
     dom.fileList.replaceChildren();
     showView(dom.publicShareView);
     dom.publicFileName.textContent = '공유 파일을 확인하는 중입니다';
-    dom.publicFileMeta.textContent = 'URL의 비밀 fragment는 주소창에서 제거했습니다.';
-    announcePublicStatus('공유 링크의 비밀 주소 조각을 제거하고 암호화 정보를 확인하고 있습니다.');
-    dom.publicPreviewBody.replaceChildren(createStatusMessage('암호화된 공유 정보를 확인하고 있습니다.'));
+    dom.publicFileMeta.textContent = '공유 주소는 주소창에서 제거했습니다.';
+    announcePublicStatus('공유 주소를 제거하고 파일 정보를 확인하고 있습니다.');
+    dom.publicPreviewBody.replaceChildren(createStatusMessage('공유 파일 정보를 확인하고 있습니다.'));
     dom.publicPrintButton.disabled = true;
     dom.publicDownloadButton.disabled = true;
     dom.publicExitButton.disabled = false;
@@ -503,7 +536,7 @@ async function initializePublicShare(fragment) {
         resetPublicExitTimer();
         dom.publicFileName.textContent = file.name;
         dom.publicFileMeta.textContent = `${FILE_TYPE_LABELS[file.type] || FILE_TYPE_LABELS.other} · ${formatSize(file.size)} · 표시상 만료 ${formatDateTime(new Date(capability.expiresAt))}`;
-        dom.publicPreviewBody.replaceChildren(createStatusMessage('파일 암호문을 가져와 무결성을 확인하는 중입니다.'));
+        dom.publicPreviewBody.replaceChildren(createStatusMessage('공유 파일을 확인하는 중입니다.'));
 
         let decrypted = null;
         try {
@@ -541,7 +574,7 @@ async function initializePublicShare(fragment) {
             : tooLarge ? '이 공용 브라우저에서 처리하기에는 파일이 너무 큽니다'
                 : unsupportedCrypto ? '이 브라우저는 공유 파일 복호화를 지원하지 않습니다' : '공유 파일을 열 수 없습니다';
         dom.publicFileMeta.textContent = expired
-            ? '정적 호스팅에서는 서버가 만료를 강제하지 못하지만, 이 앱은 링크에 기록된 시간을 지나면 열지 않습니다.'
+            ? '표시된 유효 시간은 이 브라우저에서 확인합니다. 보낸 사람에게 새 링크를 요청하세요.'
             : tooLarge ? '브라우저 복호화 상한은 256MB입니다. 신뢰 기기의 로컬 도구를 사용하세요.'
                 : unsupportedCrypto ? 'Web Crypto API가 있는 최신 보안 브라우저에서 링크를 다시 여세요.' : '링크가 손상되었거나 파일이 변경·삭제되었을 수 있습니다.';
         dom.publicPreviewBody.replaceChildren(createStatusMessage(
@@ -636,8 +669,7 @@ async function handleLocationHashChange() {
         if (decryptKey) {
             handleRequestedFile();
         } else {
-            showVaultUnlock();
-            showAuthError('이 v1 위치 링크는 전체 보관함 비밀번호가 필요합니다. 공용 기기에는 master password를 입력하지 마세요.');
+            showVaultUnlock({ legacyLink: true });
         }
     }
 }
@@ -992,6 +1024,8 @@ async function unlockWithKey(key, operation) {
     decryptKey = key;
     await reloadEncryptedManifest({ throwOnError: true });
     assertTrustedOperationCurrent(operation);
+    dom.managementView.hidden = true;
+    dom.vaultContent.hidden = false;
     showView(dom.appView);
     registerServiceWorker(operation.epoch);
     resetIdleLockTimer();
@@ -1144,7 +1178,7 @@ function applyFilters() {
     const sortBy = dom.sortSelect.value;
     dom.clearSearchButton.hidden = query.length === 0;
 
-    visibleFiles = allFiles.filter((file) => {
+    const matchingFiles = allFiles.filter((file) => {
         const originalName = file.name.toLocaleLowerCase('ko-KR');
         const displayName = file.displayName.toLocaleLowerCase('ko-KR');
         const matchesQuery = !query || originalName.includes(query) || displayName.includes(query);
@@ -1152,28 +1186,33 @@ function applyFilters() {
         return matchesQuery && matchesType;
     });
 
-    visibleFiles.sort((a, b) => {
-        if (sortBy === 'recent') {
-            return b.modifiedAt.getTime() - a.modifiedAt.getTime() || collator.compare(a.name, b.name);
-        }
-
-        if (sortBy === 'size') {
-            return b.size - a.size || collator.compare(a.name, b.name);
-        }
-
-        if (sortBy === 'extension') {
-            return collator.compare(a.extension, b.extension) || collator.compare(a.name, b.name);
-        }
-
-        if (sortBy === 'api') {
-            return a.apiIndex - b.apiIndex;
-        }
-
-        return collator.compare(a.name, b.name);
-    });
+    if (!query && activeFileView === 'recent') {
+        matchingFiles.sort(compareFilesBy('recent'));
+        visibleFiles = matchingFiles.slice(0, 10);
+    } else {
+        visibleFiles = matchingFiles.sort(compareFilesBy(sortBy));
+    }
 
     renderFiles();
     updateSelection();
+}
+
+function compareFilesBy(sortBy) {
+    return (a, b) => {
+        if (sortBy === 'recent') {
+            return b.modifiedAt.getTime() - a.modifiedAt.getTime() || collator.compare(a.name, b.name);
+        }
+        if (sortBy === 'size') {
+            return b.size - a.size || collator.compare(a.name, b.name);
+        }
+        if (sortBy === 'extension') {
+            return collator.compare(a.extension, b.extension) || collator.compare(a.name, b.name);
+        }
+        if (sortBy === 'api') {
+            return a.apiIndex - b.apiIndex;
+        }
+        return collator.compare(a.name, b.name);
+    };
 }
 
 function parseDateValue(value) {
@@ -1225,7 +1264,12 @@ function renderFiles() {
     }
 
     if (visibleFiles.length === 0) {
-        const item = createStateItem('검색', '검색 결과가 없습니다.', '검색어 또는 파일 타입 필터를 조정해 주세요.');
+        const hasQuery = dom.searchInput.value.trim().length > 0;
+        const item = createStateItem(
+            hasQuery ? '검색' : 'FILE',
+            hasQuery ? '검색 결과가 없습니다.' : '이 보기에 표시할 파일이 없습니다.',
+            hasQuery ? '검색어 또는 파일 타입 필터를 조정해 주세요.' : '파일 타입 필터를 조정하거나 전체 파일 보기를 선택해 주세요.'
+        );
         const resetButton = document.createElement('button');
         resetButton.type = 'button';
         resetButton.className = 'secondary';
@@ -2035,15 +2079,15 @@ async function handleUploadFiles(fileList) {
         const zipBlob = createZipBlob(zipEntries);
         assertTrustedOperationCurrent(operation);
         downloadBlob(zipBlob, UPDATE_ZIP_FILE_NAME);
-        dom.uploadStatus.textContent = `${uploadFiles.length}개 파일 업데이트 ZIP 생성됨 · 아직 업로드되거나 배포되지 않았습니다.`;
-        showToast('암호화 업데이트 ZIP 다운로드를 요청했습니다. 아직 미배포 상태입니다.', 'success');
+        dom.uploadStatus.textContent = `${uploadFiles.length}개 파일의 업데이트 패키지 다운로드 요청됨 · 아직 적용되지 않음`;
+        showToast('업데이트 패키지 다운로드를 요청했습니다. 아직 적용되지 않았습니다.', 'success');
     } catch (error) {
         if (isTrustedOperationCancelled(error, operation)) {
             return;
         }
         console.error(error);
-        dom.uploadStatus.textContent = '업데이트 ZIP 생성에 실패했습니다.';
-        showToast('파일 암호화 업데이트 생성에 실패했습니다.', 'error');
+        dom.uploadStatus.textContent = '업데이트 패키지를 만들지 못했습니다.';
+        showToast('암호화 업데이트 패키지를 만들지 못했습니다.', 'error');
     } finally {
         finishTrustedOperation(operation);
         isUploadRunning = false;
@@ -2431,15 +2475,19 @@ function lockDrive(options = {}) {
     invalidateTrustedOperations();
     clearVaultMemory();
     activeFilter = 'all';
+    activeFileView = 'all';
     updateFilterChips();
+    setActiveFileView('all');
     closePreviewModal({ silent: true });
     closeQrModal({ silent: true });
     dom.appView.classList.remove('selection-mode');
     removeStoredSessions();
     dom.searchInput.value = '';
     dom.fileList.replaceChildren();
-    dom.uploadStatus.textContent = '파일을 선택하면 암호화 ZIP을 준비합니다 · 아직 미배포';
+    dom.uploadStatus.textContent = '파일을 선택하면 암호화 업데이트 패키지를 준비합니다.';
     dom.dropZone.classList.remove('dragging', 'busy');
+    dom.managementView.hidden = true;
+    dom.vaultContent.hidden = false;
     dom.passwordInput.value = '';
     if (location.hash) {
         history.replaceState(null, '', `${location.pathname}${location.search}`);
@@ -2477,7 +2525,7 @@ function scrubSensitiveDom() {
     dom.qrMeta.textContent = '링크 정보가 정리되었습니다.';
     dom.qrLink.textContent = '';
     dom.loadingMessage.textContent = '처리 중입니다...';
-    dom.uploadStatus.textContent = '파일을 선택하면 암호화 ZIP을 준비합니다 · 아직 미배포';
+    dom.uploadStatus.textContent = '파일을 선택하면 암호화 업데이트 패키지를 준비합니다.';
     dom.fileSummary.textContent = '0개 파일 · 0 B · 최근 업데이트 없음';
     dom.resultCount.textContent = '0 / 0개 표시';
     dom.selectedCount.textContent = '선택 0개';
@@ -2541,6 +2589,8 @@ function setLoading(loading, message) {
         button.disabled = loading;
     });
     dom.sortSelect.disabled = loading;
+    dom.recentTab.disabled = loading;
+    dom.allTab.disabled = loading;
     dom.selectionModeButton.disabled = loading || visibleFiles.length === 0;
     dom.allZipButton.disabled = loading || isZipRunning || isUploadRunning || allFiles.length === 0;
     dom.uploadPickButton.disabled = loading || isUploadRunning;
@@ -2599,8 +2649,6 @@ function hideOverlay() {
 
 function showView(view) {
     [
-        dom.modeSelectView,
-        dom.shareHelpView,
         dom.authView,
         dom.loadingView,
         dom.appView,
