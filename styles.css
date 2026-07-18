@@ -952,6 +952,50 @@ code {
     min-height: 0;
 }
 
+.folder-breadcrumb {
+    margin: 0 0 0.65rem;
+    overflow-x: auto;
+}
+
+.folder-breadcrumb ol {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-width: max-content;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.folder-breadcrumb li:not(:first-child)::before {
+    content: '/';
+    margin-right: 0.4rem;
+    color: var(--text-muted);
+}
+
+.folder-breadcrumb button,
+.folder-breadcrumb span {
+    min-height: 36px;
+    padding: 0.35rem 0.5rem;
+    border: 0;
+    border-radius: 8px;
+    color: var(--text-muted);
+    background: transparent;
+    font: inherit;
+    font-size: 0.82rem;
+    font-weight: 750;
+}
+
+.folder-breadcrumb button {
+    color: var(--primary);
+    cursor: pointer;
+}
+
+.folder-breadcrumb [aria-current="page"] {
+    color: var(--text);
+    background: var(--surface-muted);
+}
+
 .section-heading {
     display: flex;
     align-items: end;
@@ -1227,9 +1271,90 @@ code {
     background: var(--surface-muted);
 }
 
+.folder-item {
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.folder-open {
+    display: grid;
+    grid-template-columns: 48px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.9rem;
+    width: 100%;
+    min-height: 72px;
+    padding: 0.75rem 0.25rem;
+    border: 0;
+    border-radius: 0;
+    color: var(--text);
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+}
+
+.folder-open:hover,
+.folder-open:focus-visible {
+    background: var(--surface-muted);
+}
+
+.folder-badge {
+    display: inline-grid;
+    place-items: center;
+    width: 44px;
+    min-height: 44px;
+    border-radius: 11px;
+    color: var(--accent);
+    background: var(--accent-soft);
+    font-size: 0.67rem;
+    font-weight: 900;
+}
+
+.folder-copy {
+    display: grid;
+    gap: 0.2rem;
+    min-width: 0;
+}
+
+.folder-copy strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.folder-copy span,
+.folder-arrow {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+
+.folder-arrow {
+    padding-right: 0.75rem;
+    font-size: 1rem;
+}
+
 .management-back {
     position: static;
     justify-self: start;
+}
+
+.portable-link-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    margin-top: 0.65rem;
+}
+
+.portable-link-row a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 40px;
+    padding: 0.45rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--primary);
+    background: var(--surface);
+    font-size: 0.82rem;
+    font-weight: 800;
+    text-decoration: none;
 }
 
 .admin-shell-body {

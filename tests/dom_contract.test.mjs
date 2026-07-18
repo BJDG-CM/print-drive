@@ -59,6 +59,15 @@ test('recent and all are real accessible views and search bypasses the recent li
     assert.match(app, /tab\.setAttribute\('aria-selected', String\(selected\)\)/);
 });
 
+test('folder navigation exposes breadcrumbs and preserves logical paths in ZIP entries', () => {
+    assert.match(html, /id="folder-breadcrumb"[^>]*aria-label="현재 폴더"/);
+    assert.match(html, /id="btn-download-folder"[^>]*>현재 폴더 ZIP<\/button>/);
+    assert.match(html, /placeholder="파일 이름 또는 경로 검색"/);
+    assert.match(app, /describeFolderEntries\(matchingFiles, currentFolder\)/);
+    assert.match(app, /filesInFolder\(allFiles, currentFolder, true\)/);
+    assert.match(app, /zipEntryPath\(file, ZIP_FOLDER_NAME\)/);
+});
+
 test('management package creation is separated and uses accurate local-apply labels', () => {
     assert.match(html, /id="btn-management">관리<\/button>/);
     assert.match(html, /id="management-view"[^>]*hidden/);
@@ -70,5 +79,7 @@ test('management package creation is separated and uses accurate local-apply lab
     assert.match(management, /npm run update:apply/);
     assert.match(app, /업데이트 패키지 다운로드 요청됨 · 아직 적용되지 않음/);
     assert.match(app, /name: 'print-drive-update\.json'/);
+    assert.match(management, /최신 휴대형 패키지/);
+    assert.match(management, /웹 보관함은 GitHub token을 요청하거나 저장하지 않습니다/);
     assert.doesNotMatch(html, /capability|master key|key slot|object index|envelope|\bv[12]\b/i);
 });

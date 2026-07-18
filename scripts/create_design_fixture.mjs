@@ -12,8 +12,12 @@ const BROWSER_ASSETS = [
     'index.html',
     'styles.css',
     'bootstrap.js',
+    'build_identity.js',
     'app.js',
     'crypto.js',
+    'file_errors.js',
+    'folder_browser.js',
+    'logical_path.js',
     'capability.js',
     'public_device.js',
     'file_types.js',
@@ -72,9 +76,13 @@ async function writeSyntheticFiles() {
         ['빈_파일', Buffer.alloc(0)]
     ]);
 
-    await Promise.all([...files].map(([name, content]) => (
-        writeFile(path.join(SOURCE_ROOT, name), content)
-    )));
+    files.set('수업/2026/주간 계획.txt', '중첩 폴더 탐색용 합성 파일입니다.\n');
+    files.set('수업/2026/참고 자료/읽기 목록.md', '# 합성 읽기 목록\n');
+    await Promise.all([...files].map(async ([name, content]) => {
+        const target = path.join(SOURCE_ROOT, ...name.split('/'));
+        await mkdir(path.dirname(target), { recursive: true });
+        await writeFile(target, content);
+    }));
 }
 
 async function encryptSyntheticFiles() {

@@ -33,6 +33,13 @@ import { clearAppManagedBrowserData } from './public_device.js';
 import { createZipBlob } from './zip.js';
 import { formatSize, setButtonContent } from './ui.js';
 import { describeFileError, safeFileDiagnostic } from './file_errors.js';
+import {
+    breadcrumbFolders,
+    describeFolderEntries,
+    filesInFolder,
+    normalizeManifestFile,
+    zipEntryPath
+} from './folder_browser.js';
 import { drawQrCode } from './qr.js';
 
 const MANIFEST_URL = 'files/manifest.enc';
@@ -55,6 +62,8 @@ let decryptKey = null;
 let decryptedManifest = null;
 let allFiles = [];
 let visibleFiles = [];
+let visibleFolders = [];
+let currentFolder = '';
 let selectedIds = new Set();
 let isSelectionMode = false;
 let isLoading = false;
@@ -148,11 +157,13 @@ const dom = {
     clearSearchButton: document.getElementById('btn-clear-search'),
     filterChips: document.getElementById('filter-chips'),
     sortSelect: document.getElementById('sort-select'),
+    folderBreadcrumb: document.getElementById('folder-breadcrumb'),
     fileSummary: document.getElementById('file-summary'),
     resultCount: document.getElementById('result-count'),
     selectedCount: document.getElementById('selected-count'),
     selectionModeButton: document.getElementById('btn-selection-mode'),
     allZipButton: document.getElementById('btn-download-all'),
+    folderZipButton: document.getElementById('btn-download-folder'),
     dropZone: document.getElementById('drop-zone'),
     uploadInput: document.getElementById('upload-input'),
     uploadPickButton: document.getElementById('btn-upload-pick'),
@@ -207,6 +218,7 @@ function init() {
     setButtonContent(dom.selectAllButton, 'check', '전체');
     setButtonContent(dom.clearSelectionButton, 'x', '해제');
     setButtonContent(dom.allZipButton, 'download', '전체 ZIP');
+    setButtonContent(dom.folderZipButton, 'download', '현재 폴더 ZIP');
     setButtonContent(dom.uploadPickButton, 'plus', '파일 선택');
     setButtonContent(dom.zipButton, 'download', '선택 ZIP 다운로드');
     setButtonContent(dom.cancelZipButton, 'x', '취소');
@@ -268,6 +280,7 @@ function bindEvents() {
     dom.selectAllButton.addEventListener('click', toggleSelectAll);
     dom.clearSelectionButton.addEventListener('click', clearSelection);
     dom.allZipButton.addEventListener('click', downloadAllAsZip);
+    dom.folderZipButton.addEventListener('click', downloadCurrentFolderAsZip);
     dom.uploadPickButton.addEventListener('click', () => dom.uploadInput.click());
     dom.uploadInput.addEventListener('change', () => handleUploadFiles(dom.uploadInput.files));
     dom.dropZone.addEventListener('dragenter', handleUploadDrag);
@@ -1141,10 +1154,11 @@ function promptForFreshPassword() {
 }
 
 function normalizeFile(file, index, fallbackModifiedAt) {
-    const extension = file.extension || getExtension(file.name);
+    const logical = normalizeManifestFile(file);
+    const extension = file.extension || getExtension(logical.name);
     const type = file.type || getFileType(extension);
     const modifiedAt = parseDateValue(file.modifiedAt || fallbackModifiedAt);
-    const displayName = createDisplayName(file.name, extension);
+    const displayName = createDisplayName(logical.name, extension);
 
     return {
         manifestEntry: file,
@@ -1152,7 +1166,9 @@ function normalizeFile(file, index, fallbackModifiedAt) {
         logicalId: file.logicalId,
         blobId: file.blobId,
         vaultId: manifestEnvelope?.vaultId,
-        name: file.name,
+        name: logical.name,
+        relativePath: logical.relativePath,
+        parentPath: logical.parentPath,
         displayName,
         size: Number(file.size || 0),
         encryptedSize: Number(file.encryptedSize || 0),
@@ -1179,20 +1195,83 @@ function applyFilters() {
     const matchingFiles = allFiles.filter((file) => {
         const originalName = file.name.toLocaleLowerCase('ko-KR');
         const displayName = file.displayName.toLocaleLowerCase('ko-KR');
-        const matchesQuery = !query || originalName.includes(query) || displayName.includes(query);
+        const logicalPath = file.relativePath.toLocaleLowerCase('ko-KR');
+        const matchesQuery = !query || originalName.includes(query) || displayName.includes(query) || logicalPath.includes(query);
         const matchesType = activeFilter === 'all' || file.type === activeFilter || (activeFilter === 'other' && file.type === 'archive');
         return matchesQuery && matchesType;
     });
 
+    visibleFolders = [];
     if (!query && activeFileView === 'recent') {
         matchingFiles.sort(compareFilesBy('recent'));
         visibleFiles = matchingFiles.slice(0, 10);
+    } else if (!query && activeFileView === 'all') {
+        visibleFolders = describeFolderEntries(matchingFiles, currentFolder);
+        visibleFiles = filesInFolder(matchingFiles, currentFolder).sort(compareFilesBy(sortBy));
     } else {
         visibleFiles = matchingFiles.sort(compareFilesBy(sortBy));
     }
 
+    renderFolderBreadcrumb(query);
     renderFiles();
     updateSelection();
+}
+
+function renderFolderBreadcrumb(query = '') {
+    const list = document.createElement('ol');
+    const rootItem = document.createElement('li');
+    const root = document.createElement(activeFileView === 'all' && !query && !currentFolder ? 'span' : 'button');
+    root.textContent = '전체 보관함';
+    if (root instanceof HTMLButtonElement) {
+        root.type = 'button';
+        root.addEventListener('click', () => openFolder(''));
+    } else {
+        root.setAttribute('aria-current', 'page');
+    }
+    rootItem.append(root);
+    list.append(rootItem);
+
+    if (query || activeFileView === 'recent') {
+        const item = document.createElement('li');
+        const current = document.createElement('span');
+        current.textContent = query ? '검색 결과' : '최근 파일';
+        current.setAttribute('aria-current', 'page');
+        item.append(current);
+        list.append(item);
+    } else {
+        const folders = breadcrumbFolders(currentFolder);
+        folders.forEach((folder, index) => {
+            const item = document.createElement('li');
+            const isCurrent = index === folders.length - 1;
+            const element = document.createElement(isCurrent ? 'span' : 'button');
+            element.textContent = folder.name;
+            if (isCurrent) {
+                element.setAttribute('aria-current', 'page');
+            } else {
+                element.type = 'button';
+                element.addEventListener('click', () => openFolder(folder.path));
+            }
+            item.append(element);
+            list.append(item);
+        });
+    }
+    dom.folderBreadcrumb.replaceChildren(list);
+    const showFolderZip = activeFileView === 'all' && !query && Boolean(currentFolder);
+    dom.folderZipButton.hidden = !showFolderZip;
+    dom.folderZipButton.disabled = isLoading || isZipRunning || isUploadRunning || filesInFolder(allFiles, currentFolder, true).length === 0;
+}
+
+function openFolder(folderPath) {
+    currentFolder = folderPath;
+    activeFileView = 'all';
+    dom.searchInput.value = '';
+    [[dom.recentTab, 'recent'], [dom.allTab, 'all']].forEach(([tab, value]) => {
+        const selected = value === 'all';
+        tab.setAttribute('aria-selected', String(selected));
+        tab.tabIndex = selected ? 0 : -1;
+    });
+    applyFilters();
+    dom.fileList.focus({ preventScroll: true });
 }
 
 function compareFilesBy(sortBy) {
@@ -1261,7 +1340,7 @@ function renderFiles() {
         return;
     }
 
-    if (visibleFiles.length === 0) {
+    if (visibleFiles.length === 0 && visibleFolders.length === 0) {
         const hasQuery = dom.searchInput.value.trim().length > 0;
         const item = createStateItem(
             hasQuery ? '검색' : 'FILE',
@@ -1279,11 +1358,42 @@ function renderFiles() {
         return;
     }
 
+    visibleFolders.forEach((folder) => {
+        dom.fileList.appendChild(createFolderItem(folder));
+    });
     visibleFiles.forEach((file) => {
         dom.fileList.appendChild(createFileItem(file));
     });
 
     updateResultCount();
+}
+
+function createFolderItem(folder) {
+    const item = document.createElement('li');
+    item.className = 'folder-item';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'folder-open';
+    button.setAttribute('aria-label', `${folder.name} 폴더 열기`);
+    const badge = document.createElement('span');
+    badge.className = 'folder-badge';
+    badge.textContent = 'DIR';
+    badge.setAttribute('aria-hidden', 'true');
+    const copy = document.createElement('span');
+    copy.className = 'folder-copy';
+    const name = document.createElement('strong');
+    name.textContent = folder.name;
+    const meta = document.createElement('span');
+    meta.textContent = `${folder.fileCount}개 파일 · ${formatSize(folder.totalSize)}`;
+    copy.append(name, meta);
+    const arrow = document.createElement('span');
+    arrow.className = 'folder-arrow';
+    arrow.textContent = '→';
+    arrow.setAttribute('aria-hidden', 'true');
+    button.append(badge, copy, arrow);
+    button.addEventListener('click', () => openFolder(folder.path));
+    item.append(button);
+    return item;
 }
 
 function createFileItem(file) {
@@ -1314,7 +1424,7 @@ function createFileItem(file) {
 
     const name = document.createElement('div');
     name.className = 'file-name';
-    name.title = file.name;
+    name.title = file.relativePath;
     renderHighlightedName(name, file.displayName, dom.searchInput.value.trim());
 
     const freshness = getFreshnessBadge(file);
@@ -1329,7 +1439,8 @@ function createFileItem(file) {
 
     const meta = document.createElement('div');
     meta.className = 'file-meta';
-    meta.textContent = `${getExtensionLabel(file)} · ${FILE_TYPE_LABELS[file.type] || FILE_TYPE_LABELS.other} · ${formatSize(file.size)} · 업데이트 ${formatDateTime(file.modifiedAt)}`;
+    const location = file.parentPath ? `${file.parentPath} · ` : '';
+    meta.textContent = `${location}${getExtensionLabel(file)} · ${FILE_TYPE_LABELS[file.type] || FILE_TYPE_LABELS.other} · ${formatSize(file.size)} · 업데이트 ${formatDateTime(file.modifiedAt)}`;
 
     info.append(nameRow, meta);
 
@@ -1629,6 +1740,7 @@ function updateSelection() {
     dom.selectedCount.hidden = !isSelectionMode;
     dom.selectionModeButton.disabled = isLoading || visibleFiles.length === 0;
     dom.allZipButton.disabled = isLoading || isZipRunning || isUploadRunning || allFiles.length === 0;
+    dom.folderZipButton.disabled = isLoading || isZipRunning || isUploadRunning || filesInFolder(allFiles, currentFolder, true).length === 0;
     dom.selectionModeButton.classList.toggle('active', isSelectionMode);
     setButtonContent(dom.selectionModeButton, isSelectionMode ? 'x' : 'check', isSelectionMode ? '완료' : '선택');
     dom.selectAllButton.disabled = isLoading || !isSelectionMode || visibleFiles.length === 0;
@@ -1916,6 +2028,12 @@ async function downloadAllAsZip() {
     await downloadFilesAsZip(allFiles, '전체 ZIP');
 }
 
+async function downloadCurrentFolderAsZip() {
+    const folderFiles = filesInFolder(allFiles, currentFolder, true);
+    if (folderFiles.length === 0) return;
+    await downloadFilesAsZip(folderFiles, '현재 폴더 ZIP');
+}
+
 async function downloadFilesAsZip(files, label) {
     if (isZipRunning) {
         return;
@@ -1953,7 +2071,7 @@ async function downloadFilesAsZip(files, label) {
             const decrypted = await fetchAndDecryptFile(file, vaultContext, { signal: operation.controller.signal });
             assertTrustedOperationCurrent(operation);
             zipEntries.push({
-                name: `${ZIP_FOLDER_NAME}/${file.name}`,
+                name: zipEntryPath(file, ZIP_FOLDER_NAME),
                 bytes: decrypted.bytes
             });
         }
@@ -2441,6 +2559,10 @@ function handleRequestedFile() {
         return false;
     }
 
+    currentFolder = file.parentPath;
+    activeFileView = 'all';
+    dom.searchInput.value = '';
+    setActiveFileView('all');
     selectedIds.add(file.id);
     setSelectionMode(true);
     updateSelection();
@@ -2461,6 +2583,7 @@ function lockDrive(options = {}) {
     clearVaultMemory();
     activeFilter = 'all';
     activeFileView = 'all';
+    currentFolder = '';
     updateFilterChips();
     setActiveFileView('all');
     closePreviewModal({ silent: true });
@@ -2490,6 +2613,8 @@ function clearVaultMemory() {
     manifestEnvelope = null;
     allFiles = [];
     visibleFiles = [];
+    visibleFolders = [];
+    currentFolder = '';
     selectedIds.clear();
     isSelectionMode = false;
     lastSelectedId = null;
@@ -2579,6 +2704,7 @@ function setLoading(loading, message) {
     dom.allTab.disabled = loading;
     dom.selectionModeButton.disabled = loading || visibleFiles.length === 0;
     dom.allZipButton.disabled = loading || isZipRunning || isUploadRunning || allFiles.length === 0;
+    dom.folderZipButton.disabled = loading || isZipRunning || isUploadRunning || filesInFolder(allFiles, currentFolder, true).length === 0;
     dom.uploadPickButton.disabled = loading || isUploadRunning;
     dom.dropZone.classList.toggle('busy', loading || isUploadRunning);
     dom.selectAllButton.disabled = loading || !isSelectionMode || visibleFiles.length === 0;
@@ -2708,7 +2834,8 @@ function hideAuthError() {
 }
 
 function updateResultCount() {
-    dom.resultCount.textContent = `${visibleFiles.length} / ${allFiles.length}개 표시`;
+    const folderText = visibleFolders.length ? ` · 폴더 ${visibleFolders.length}개` : '';
+    dom.resultCount.textContent = `${visibleFiles.length} / ${allFiles.length}개 파일 표시${folderText}`;
     const totalSize = allFiles.reduce((total, file) => total + file.size, 0);
     const latest = allFiles.reduce((latestDate, file) => (
         file.modifiedAt > latestDate ? file.modifiedAt : latestDate

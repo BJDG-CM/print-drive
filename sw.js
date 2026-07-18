@@ -10,6 +10,8 @@ const SHELL_ASSETS = [
     './app.js',
     './crypto.js',
     './file_errors.js',
+    './folder_browser.js',
+    './logical_path.js',
     './capability.js',
     './public_device.js',
     './file_types.js',
