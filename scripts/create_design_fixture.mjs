@@ -11,8 +11,11 @@ const FIXTURE_PASSPHRASE = 'print-drive-design-preview';
 const BROWSER_ASSETS = [
     'index.html',
     'styles.css',
+    'bootstrap.js',
     'app.js',
     'crypto.js',
+    'capability.js',
+    'public_device.js',
     'file_types.js',
     'ui.js',
     'zip.js',

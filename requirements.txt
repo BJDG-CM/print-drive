@@ -1,1 +1,1 @@
-watchdog>=4,<7
+watchdog==6.0.0

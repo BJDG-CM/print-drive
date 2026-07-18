@@ -1,19 +1,23 @@
-const QR_VERSION = 10;
+const QR_VERSION = 30;
 const QR_SIZE = QR_VERSION * 4 + 17;
-const QR_DATA_CODEWORDS = 274;
-const QR_ECC_CODEWORDS = 18;
-const QR_BLOCK_SIZES = [68, 68, 69, 69];
+const QR_DATA_CODEWORDS = 1735;
+const QR_ECC_CODEWORDS = 30;
+const QR_BLOCK_SIZES = [
+    115, 115, 115, 115, 115,
+    116, 116, 116, 116, 116, 116, 116, 116, 116, 116
+];
+const QR_MAX_BYTE_LENGTH = 1732;
 const QR_MASK = 0;
 
 export function drawQrCode(canvas, text) {
     const bytes = new TextEncoder().encode(text);
-    if (bytes.length > 271) {
+    if (bytes.length > QR_MAX_BYTE_LENGTH) {
         throw new Error('QR로 표시하기에는 링크가 너무 깁니다.');
     }
 
     const modules = createQrModules(bytes);
     const quiet = 4;
-    const scale = Math.max(3, Math.floor(280 / (QR_SIZE + quiet * 2)));
+    const scale = Math.max(2, Math.floor(320 / (QR_SIZE + quiet * 2)));
     const pixelSize = (QR_SIZE + quiet * 2) * scale;
     canvas.width = pixelSize;
     canvas.height = pixelSize;
@@ -21,9 +25,6 @@ export function drawQrCode(canvas, text) {
     const context = canvas.getContext('2d');
     context.fillStyle = '#ffffff';
     context.fillRect(0, 0, pixelSize, pixelSize);
-    canvas.style.width = `${pixelSize}px`;
-    canvas.style.height = `${pixelSize}px`;
-
     context.fillStyle = '#000000';
 
     for (let y = 0; y < QR_SIZE; y += 1) {
@@ -82,7 +83,7 @@ function drawFinder(modules, reserved, centerX, centerY) {
 }
 
 function drawAlignments(modules, reserved) {
-    const positions = [6, 28, 50];
+    const positions = [6, 26, 52, 78, 104, 130];
     positions.forEach((x) => {
         positions.forEach((y) => {
             if (reserved[y][x]) {
@@ -175,7 +176,8 @@ function createCodewords(bytes) {
     });
 
     const result = [];
-    for (let i = 0; i < 69; i += 1) {
+    const largestBlock = Math.max(...QR_BLOCK_SIZES);
+    for (let i = 0; i < largestBlock; i += 1) {
         blocks.forEach((block) => {
             if (i < block.data.length) {
                 result.push(block.data[i]);

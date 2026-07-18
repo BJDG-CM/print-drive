@@ -1,120 +1,110 @@
 #!/usr/bin/env node
-import { mkdir, readFile, readdir, rm, writeFile, copyFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
-import { PROJECT_ROOT, displayPath } from '../paths.mjs';
-import { assertPublicFilesClean, isAllowedPublicFileName } from '../public_files_guard.mjs';
+import { pathToFileURL } from 'node:url';
+import { PROJECT_ROOT, displayPath, getRuntimeConfig } from '../paths.mjs';
+import { inspectPublicFiles } from '../public_files_guard.mjs';
 import { assertDistClean } from './check_dist.mjs';
+import { collectBrowserAssets } from './dist_contract.mjs';
 
-const DIST_DIR = path.join(PROJECT_ROOT, 'dist');
-const FILES_DIR = path.join(PROJECT_ROOT, 'files');
-const DIST_ALLOWED_ENTRIES = new Set(['index.html', 'manifest.json', 'icon.svg', 'robots.txt', 'sw.js', 'files']);
+export async function buildDist(options = {}) {
+    const projectRoot = path.resolve(options.projectRoot || PROJECT_ROOT);
+    const runtime = options.outputDir ? null : getRuntimeConfig({ projectRoot });
+    const sourceFilesDir = path.resolve(options.outputDir || runtime.encryptedOutputDirectory);
+    const distDir = path.resolve(options.distDir || path.join(projectRoot, 'dist'));
+    assertManagedDistPath(projectRoot, distDir);
 
-async function main() {
-    await assertPublicFilesClean(FILES_DIR, { displayDir: displayPath(FILES_DIR) });
+    const inspection = await inspectPublicFiles(sourceFilesDir, {
+        displayDir: displayFor(projectRoot, sourceFilesDir),
+        allowLegacyV1: options.allowLegacyV1 !== false,
+        verifyCiphertext: true,
+        rejectUnreferenced: true
+    });
+    const browserAssets = await collectBrowserAssets(projectRoot);
+    const tempBase = path.join(projectRoot, '.tmp');
+    await mkdir(tempBase, { recursive: true });
+    const workDir = await mkdtemp(path.join(tempBase, 'dist-build-'));
+    const stageDir = path.join(workDir, 'stage');
+    const backupDir = path.join(workDir, 'previous-dist');
 
-    await mkdir(DIST_DIR, { recursive: true });
-    await removeUnexpectedDistEntries();
-
-    await writeFile(path.join(DIST_DIR, 'index.html'), await buildIndexHtml(), 'utf8');
-
-    for (const file of ['manifest.json', 'icon.svg', 'robots.txt', 'sw.js']) {
-        await copyFile(path.join(PROJECT_ROOT, file), path.join(DIST_DIR, file));
-    }
-
-    await syncFilesDirectory(FILES_DIR, path.join(DIST_DIR, 'files'));
-    await assertDistClean(DIST_DIR);
-    console.log(`Built GitHub Pages artifact in ${displayPath(DIST_DIR)}.`);
-}
-
-async function removeUnexpectedDistEntries() {
-    const entries = await readdir(DIST_DIR, { withFileTypes: true });
-    for (const entry of entries) {
-        if (DIST_ALLOWED_ENTRIES.has(entry.name)) {
-            continue;
+    try {
+        await mkdir(path.join(stageDir, 'files'), { recursive: true });
+        for (const relative of browserAssets) {
+            const target = path.join(stageDir, ...relative.split('/'));
+            await mkdir(path.dirname(target), { recursive: true });
+            await copyFile(path.join(projectRoot, ...relative.split('/')), target);
         }
-        await rm(path.join(DIST_DIR, entry.name), { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+
+        await copyFile(path.join(sourceFilesDir, 'manifest.enc'), path.join(stageDir, 'files', 'manifest.enc'));
+        for (const name of inspection.referencedNames) {
+            await copyFile(path.join(sourceFilesDir, name), path.join(stageDir, 'files', name));
+        }
+
+        await assertDistClean(stageDir, {
+            projectRoot,
+            expectedBrowserAssets: browserAssets,
+            allowLegacyV1: options.allowLegacyV1 !== false
+        });
+        await replaceDistAtomically(distDir, stageDir, backupDir);
+    } finally {
+        await rm(workDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     }
+
+    if (inspection.legacyV1) {
+        console.warn('Built legacy v1 artifact. Target stale files were removed, but v1 cannot prove manifest-to-blob references.');
+    }
+    console.log(`Built verified GitHub Pages artifact in ${displayFor(projectRoot, distDir)}.`);
+    return { distDir, inspection, browserAssets };
 }
 
-async function syncFilesDirectory(sourceDir, targetDir) {
-    await mkdir(targetDir, { recursive: true });
-
-    const sourceEntries = await readdir(sourceDir, { withFileTypes: true });
-    const sourceNames = new Set(sourceEntries.map((entry) => entry.name));
-    const targetEntries = await readdir(targetDir, { withFileTypes: true });
-
-    for (const entry of targetEntries) {
-        if (!sourceNames.has(entry.name) && !isAllowedPublicFileName(entry.name)) {
-            await rm(path.join(targetDir, entry.name), { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+async function replaceDistAtomically(distDir, stageDir, backupDir) {
+    let hadPrevious = false;
+    try {
+        const current = await lstat(distDir);
+        if (current.isSymbolicLink()) {
+            throw new Error('Refusing to replace dist because it is a symbolic link.');
+        }
+        hadPrevious = true;
+    } catch (error) {
+        if (error.code !== 'ENOENT') {
+            throw error;
         }
     }
 
-    for (const entry of sourceEntries) {
-        if (!entry.isFile()) {
-            continue;
+    if (hadPrevious) {
+        await rename(distDir, backupDir);
+    }
+    try {
+        await rename(stageDir, distDir);
+    } catch (error) {
+        if (hadPrevious) {
+            await rename(backupDir, distDir);
         }
-        await copyFile(path.join(sourceDir, entry.name), path.join(targetDir, entry.name));
+        throw error;
+    }
+    if (hadPrevious) {
+        await rm(backupDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     }
 }
 
-async function buildIndexHtml() {
-    let html = await readFile(path.join(PROJECT_ROOT, 'index.html'), 'utf8');
-    const css = await readFile(path.join(PROJECT_ROOT, 'styles.css'), 'utf8');
-    const js = await bundleModule(path.join(PROJECT_ROOT, 'app.js'));
-
-    html = html.replace(
-        /<link rel="stylesheet" href="styles\.css">/,
-        () => `<style>\n${indent(css.trimEnd(), 8)}\n    </style>`
-    );
-    html = html.replace(
-        /<script type="module" src="app\.js"><\/script>/,
-        () => `<script type="module">\n${indent(js.trimEnd(), 8)}\n    </script>`
-    );
-
-    return html;
+function assertManagedDistPath(projectRoot, distDir) {
+    const relative = path.relative(projectRoot, distDir);
+    if (relative !== 'dist') {
+        throw new Error(`Refusing to build into unmanaged dist path ${distDir}.`);
+    }
 }
 
-async function bundleModule(filePath, seen = new Set()) {
-    const normalizedPath = path.normalize(filePath);
-    if (seen.has(normalizedPath)) {
-        return '';
+function displayFor(root, filePath) {
+    if (root === PROJECT_ROOT) {
+        return displayPath(filePath);
     }
-    seen.add(normalizedPath);
-
-    const source = await readFile(normalizedPath, 'utf8');
-    const importRegex = /import\s+[\s\S]*?\s+from\s+['"](.+?)['"];\s*/g;
-    const dependencyPaths = [];
-    let match;
-
-    while ((match = importRegex.exec(source)) !== null) {
-        const specifier = match[1];
-        if (!specifier.startsWith('.')) {
-            throw new Error(`Unsupported browser import in ${displayPath(normalizedPath)}: ${specifier}`);
-        }
-        dependencyPaths.push(path.resolve(path.dirname(normalizedPath), specifier));
-    }
-
-    const dependencies = [];
-    for (const dependencyPath of dependencyPaths) {
-        dependencies.push(await bundleModule(dependencyPath, seen));
-    }
-
-    const body = source
-        .replace(importRegex, '')
-        .replace(/^export\s+(async\s+function|function|const|let|var|class)\s+/gm, '$1 ')
-        .replace(/^export\s+\{[\s\S]*?\};?\s*$/gm, '');
-
-    return [...dependencies, `// ${displayPath(normalizedPath)}\n${body.trimEnd()}`]
-        .filter(Boolean)
-        .join('\n\n');
+    const relative = path.relative(root, filePath);
+    return relative && !relative.startsWith('..') && !path.isAbsolute(relative) ? relative : filePath;
 }
 
-function indent(value, spaces) {
-    const prefix = ' '.repeat(spaces);
-    return value.split('\n').map((line) => `${prefix}${line}`).join('\n');
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+    buildDist().catch((error) => {
+        console.error(error.message);
+        process.exit(1);
+    });
 }
-
-main().catch((error) => {
-    console.error(error.message);
-    process.exit(1);
-});

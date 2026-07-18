@@ -4,9 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node scripts/check_syntax.mjs && node scripts/py_compile_check.mjs && node check_public_files.mjs",
-    "test": "node scripts/smoke_test.mjs",
+    "check": "node scripts/check_syntax.mjs && node scripts/py_compile_check.mjs && node scripts/check_workflows.mjs && node scripts/check_tracked_leaks.mjs && node scripts/check_history_paths.mjs && node check_public_files.mjs",
+    "test": "node --test --test-isolation=none tests/*.test.mjs && python -m unittest discover -s tests -p \"test_*.py\" && node scripts/smoke_test.mjs",
     "build": "node scripts/build_dist.mjs",
-    "design:fixture": "node scripts/create_design_fixture.mjs"
+    "verify": "npm run check && npm test && npm run build && node scripts/check_dist.mjs",
+    "config:setup": "node scripts/config_cli.mjs setup",
+    "config:check": "node scripts/config_cli.mjs check",
+    "sync:dry-run": "node scripts/config_cli.mjs dry-run",
+    "design:fixture": "node scripts/create_design_fixture.mjs",
+    "benchmark": "node scripts/benchmark_v2.mjs --full",
+    "benchmark:quick": "node scripts/benchmark_v2.mjs"
   }
 }

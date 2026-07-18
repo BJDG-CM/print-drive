@@ -14,17 +14,39 @@ const ICONS = {
 };
 
 export function setButtonContent(button, iconName, label) {
-    const labelElement = document.createElement('span');
-    labelElement.className = 'btn-label';
+    [...button.childNodes]
+        .filter((node) => node.nodeType === Node.TEXT_NODE)
+        .forEach((node) => node.remove());
+
+    let iconElement = button.querySelector(':scope > .btn-icon');
+    if (!iconElement || iconElement.dataset.iconName !== iconName) {
+        const nextIcon = createIcon(iconName);
+        if (iconElement) {
+            iconElement.replaceWith(nextIcon);
+        } else {
+            button.prepend(nextIcon);
+        }
+        iconElement = nextIcon;
+    }
+
+    let labelElement = button.querySelector(':scope > .btn-label');
+    if (!labelElement) {
+        labelElement = document.createElement('span');
+        labelElement.className = 'btn-label';
+        button.append(labelElement);
+    }
     labelElement.textContent = label;
-    button.replaceChildren(createIcon(iconName), labelElement);
 }
 
 function createIcon(iconName) {
     const wrapper = document.createElement('span');
-    wrapper.setAttribute('aria-hidden', 'true');
     wrapper.innerHTML = ICONS[iconName] || '';
-    return wrapper.firstElementChild || document.createElement('span');
+    const icon = wrapper.firstElementChild || document.createElement('span');
+    icon.classList.add('btn-icon');
+    icon.dataset.iconName = iconName;
+    icon.setAttribute('aria-hidden', 'true');
+    icon.setAttribute('focusable', 'false');
+    return icon;
 }
 
 export function formatSize(bytes) {

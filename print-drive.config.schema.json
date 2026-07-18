@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/print-drive.config.schema.json",
+  "title": "Print Drive local configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sourceDirectory",
+    "encryptedOutputDirectory",
+    "autoSync",
+    "allowedBranch",
+    "remote"
+  ],
+  "properties": {
+    "sourceDirectory": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\u0000\\r\\n]*\\S[^\\u0000\\r\\n]*$"
+    },
+    "encryptedOutputDirectory": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\u0000\\r\\n]*\\S[^\\u0000\\r\\n]*$"
+    },
+    "autoSync": {
+      "type": "boolean"
+    },
+    "allowedBranch": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!-)(?!.*(?:\\.\\.|@\\{|[\\u0000-\\u0020~^:?*\\[\\\\]))[^/]+(?:/[^/]+)*$"
+    },
+    "remote": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    }
+  }
+}

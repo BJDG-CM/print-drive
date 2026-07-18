@@ -1,182 +1,170 @@
 # Print Drive
 
-Print Drive는 프린트할 파일을 잠깐 내려받기 위한 GitHub Pages 기반 파일 목록 페이지입니다.
+Print Drive는 개인 기기에서 준비한 파일을 학교·도서관 같은 공용 기기에서 내려받아 인쇄하기 위한 정적 웹앱입니다. 평문 원본과 passphrase는 로컬에만 두고, 공개 저장소와 GitHub Pages에는 암호화 manifest와 immutable `.bin` object만 둡니다.
 
-백엔드 없이 공개 저장소에 올릴 수 있도록 원본 파일은 로컬에만 두고, Pages에는 암호화된 `files/manifest.enc`와 `files/*.bin`만 배포합니다.
+이 구조가 숨기지 못하는 정보도 있습니다. 저장소와 Pages 방문 여부, 암호문 개수·크기·변경 시각, Git 이력은 공개될 수 있습니다. 약한 passphrase에는 오프라인 추측 공격이 가능합니다.
 
-## 보안 구조
+## 요구 사항
 
-- 원본 파일은 로컬 `private_files/`에만 둡니다.
-- `private_files/`, `.print-drive-passphrase`, `.tmp/`는 Git에서 제외됩니다.
-- `node encrypt_files.mjs`가 원본 파일을 AES-256-GCM으로 암호화합니다.
-- 파일명, 크기, 타입, 원본 해시는 암호화된 `manifest.enc` 안에만 들어갑니다.
-- 웹 페이지에는 비밀번호나 비밀번호 해시가 들어가지 않습니다.
-- 브라우저는 Web Crypto API로 PBKDF2-SHA256 키를 만들고 manifest와 파일을 복호화합니다.
-- `files/`에는 `manifest.enc`, `.gitkeep`, 32자리 lowercase hex 이름의 `.bin` 파일만 허용됩니다.
-
-## 첫 설정
-
-1. 원본 파일을 `private_files/` 폴더에 넣습니다.
-2. 비밀번호를 직접 입력해 암호화합니다.
+- Node.js 24
+- Python 3.13과 `watchdog==6.0.0` — 자동 감시를 사용할 때만 필요
+- Git
+- Web Crypto API를 지원하는 최신 브라우저
 
 ```powershell
-node encrypt_files.mjs
+npm ci --ignore-scripts
+python -m pip install -r requirements.txt
 ```
 
-자동으로 강한 로컬 비밀번호 파일을 만들려면 아래 명령을 실행합니다.
+## 1. 로컬 설정
+
+원본 source는 외부 절대경로를 사용할 수 있습니다. 암호문 output은 저장소 내부여야 하며 저장소 root, `dist`, `.git`, `node_modules`, source와 동일하거나 중첩된 경로는 거부됩니다. Git에서 ignore되는 경로를 output으로 사용하면 자동 commit되지 않으므로 `files` 같은 tracked 경로를 사용하세요.
+
+```powershell
+node scripts/config_cli.mjs setup `
+  --source "D:/PrintDrive-Inbox" `
+  --output "./files" `
+  --branch "main" `
+  --remote "origin"
+```
+
+명령은 `print-drive.config.json`과 필요한 디렉터리를 만듭니다. 실제 config는 machine-local 경로를 포함하므로 Git에서 제외됩니다. 공유 가능한 예시는 `print-drive.config.json.example`, 형식은 `print-drive.config.schema.json`에 있습니다.
+
+허용되는 key는 다음 다섯 개뿐입니다.
+
+```json
+{
+  "sourceDirectory": "D:/PrintDrive-Inbox",
+  "encryptedOutputDirectory": "./files",
+  "autoSync": true,
+  "allowedBranch": "main",
+  "remote": "origin"
+}
+```
+
+`sourceDirectory`는 기본 ignored `private_files/`를 쓰거나 저장소 밖의 절대/상대 경로를 지정합니다. 저장소 내부의 다른 폴더는 평문이 `git add`에 포함될 수 있어 config 검사가 거부합니다.
+
+비밀번호, passphrase, token, PAT, credential key는 config 검증 단계에서 거부됩니다.
+
+설정과 Git 연결을 확인합니다. 현재 branch와 upstream도 정확히 일치해야 합니다.
+
+```powershell
+node scripts/config_cli.mjs check
+node scripts/config_cli.mjs dry-run
+```
+
+기존 스크립트를 위한 `PRINT_DRIVE_ROOT`, `PRINT_DRIVE_SOURCE_DIR`, `PRINT_DRIVE_OUTPUT_DIR`, `PRINT_DRIVE_PASSWORD_FILE`, `PRINT_DRIVE_PASSPHRASE` 환경변수는 유지됩니다. config와 환경변수 모두 동일한 output 경계 검증을 통과해야 합니다. custom password file은 저장소 밖에 두어야 하며 source/output 내부 경로는 거부됩니다.
+
+저장소가 OneDrive·Dropbox 같은 동기화 폴더에 있으면 Git에서 제외된 기본 passphrase file도 cloud client가 복제할 수 있습니다. `PRINT_DRIVE_PASSWORD_FILE`을 저장소와 cloud-sync root 밖의 접근 제한 경로로 지정하고 별도 offline backup을 유지하세요.
+
+## 2. 최초 암호화와 v1 migration
+
+새 v2 vault와 강한 local passphrase 파일을 만듭니다.
 
 ```powershell
 node encrypt_files.mjs --init-passphrase
 ```
 
-이 경우 `.print-drive-passphrase`가 생성됩니다. 이 파일은 Git에 올라가지 않습니다.
-
-## 평소 사용법
+기존 v1 vault는 명시적으로 migration합니다. 원본과 현재 암호문을 백업하고 먼저 `docs/RECOVERY.md`를 읽으세요.
 
 ```powershell
-node encrypt_files.mjs
-git add files/
-git commit -m "Update encrypted print files"
-git push
+node encrypt_files.mjs --migrate-v1
 ```
 
-GitHub Actions는 검사와 빌드를 실행한 뒤 `dist/`만 GitHub Pages artifact로 배포합니다.
-
-## 화면에서 파일 추가
-
-잠금 해제 후 앱 화면의 `파일 추가` 영역에 파일을 드래그하거나 `파일 선택`을 누르면, 브라우저가 현재 비밀번호 키로 새 파일을 암호화하고 `Print_Drive_Encrypted_Update.zip`을 내려받습니다.
-
-ZIP 안의 `files/manifest.enc`와 새 `files/*.bin`을 프로젝트의 `files/` 폴더에 덮어쓴 뒤 배포합니다.
-
-```powershell
-git add files/
-git commit -m "Update encrypted print files"
-git push
-```
-
-동일한 파일명은 새 암호화 파일이 목록에서 우선합니다. 오래된 `.bin` 정리까지 한 번에 하려면 `node encrypt_files.mjs`를 다시 실행합니다.
-
-## 비밀번호 변경
-
-가장 안전한 방법은 숨김 입력입니다.
+v2는 passphrase에서 만든 key-encryption key, random vault master key, per-file data key를 분리합니다. 변경되지 않은 파일 object는 재사용되며 password rotation은 file blob을 다시 암호화하지 않습니다.
 
 ```powershell
 node set_password.mjs
 ```
 
-기본 정책:
+CLI argument로 passphrase를 넘기는 방식은 shell history에 남을 수 있으므로 기본적으로 사용하지 않습니다. `.print-drive-passphrase`는 Git에서 제외되지만 별도의 안전한 backup이 필요합니다.
 
-- 12자 미만 비밀번호는 실패합니다.
-- 숫자만 있는 비밀번호는 약한 비밀번호로 간주됩니다.
-- 숫자만 있는 비밀번호는 `--allow-weak-password`를 쓰더라도 최소 8자리 이상이어야 합니다.
-- CLI 인자로 비밀번호를 넘기는 기능은 기본 비활성화입니다.
+## 3. 평소 파일 갱신
 
-정말 약한 비밀번호를 허용해야 할 때만 명시적으로 실행합니다.
+수동 갱신:
 
 ```powershell
-node set_password.mjs --allow-weak-password
+node encrypt_files.mjs
+node check_public_files.mjs
+git add -A -- files
+git commit -m "Update encrypted print files" -- files
+git push origin main
 ```
 
-쉘 히스토리 노출 위험을 감수하고 CLI 인자를 써야 할 때만 아래처럼 명시합니다.
+v2 encryption은 fingerprint가 같은 object를 재사용하고, 새 manifest를 검증한 후 publish하며, publish가 성공한 뒤 unreferenced blob을 정리합니다. 중간 실패 시 기존 정상 manifest가 기준점으로 남습니다.
 
-```powershell
-node set_password.mjs --allow-cli-password --allow-weak-password <password>
-```
-
-## 검증과 빌드
-
-```powershell
-npm run check
-npm test
-npm run build
-```
-
-- `npm run check`: `node --check`, `python -m py_compile`, public files leak guard를 실행합니다.
-- `npm test`: 임시 파일을 암호화한 뒤 manifest와 파일 복호화 smoke test를 실행합니다.
-- `npm run build`: Pages 배포용 `dist/`를 만듭니다.
-
-`dist/`에는 아래 항목만 포함됩니다.
-
-- `index.html`
-- `manifest.json`
-- `icon.svg`
-- `robots.txt`
-- `sw.js`
-- `files/`
-
-## 자동 동기화
-
-필요한 Python 의존성을 설치합니다.
-
-```powershell
-python -m pip install -r requirements.txt
-```
-
-실행:
+자동 감시:
 
 ```powershell
 python auto_sync.py
 ```
 
-`auto_sync.py`는 `private_files/`와 `files/`를 감시합니다.
+자동 동기화기는 다음 경계를 적용합니다.
 
-- `private_files/`가 바뀌고 `.print-drive-passphrase` 또는 `PRINT_DRIVE_PASSPHRASE`가 있으면 `node encrypt_files.mjs`를 실행합니다.
-- 그 뒤 `files/`의 암호화 결과만 commit/push합니다.
-- `node`, `git`, `watchdog`이 없으면 실행 초기에 명확한 오류를 출력합니다.
-- 원격 브랜치가 앞서 있으면 자동 병합하지 않고 수동 `git pull --rebase` 확인을 안내합니다.
+- source 최상위 파일만 감시하며 output 이벤트는 감시하지 않습니다.
+- 숨김 파일, Office 임시 파일, OneDrive/브라우저의 incomplete-download suffix를 무시합니다.
+- 크기와 수정 시간이 연속 snapshot에서 안정될 때까지 기다립니다.
+- symlink file은 암호화 source로 사용하지 않습니다.
+- Git top-level, allowed branch, remote, upstream을 commit 전에 확인합니다.
+- `git add -A -- <output>`과 `git commit --only -- <output>`을 사용하므로 다른 staged 변경을 commit하지 않습니다.
+- commit 후 push가 실패해도 local commit을 보존하며 60초 뒤와 다음 실행에서 새 파일 변경 없이도 pending commit을 다시 확인합니다.
+- non-fast-forward에서는 merge, rebase, force push를 자동 실행하지 않습니다.
 
-## 경로 설정
+상세 운영과 복구는 `docs/OPERATIONS.md`, `docs/RECOVERY.md`에 있습니다.
 
-모든 기본 경로는 프로젝트 루트 기준입니다. 사용자가 다른 폴더에서 명령을 실행해도 스크립트 파일 위치를 기준으로 동작합니다.
+## 4. 브라우저 업데이트 ZIP
 
-환경변수로 경로를 바꿀 수 있습니다.
+잠금 해제된 신뢰 기기에서 파일 추가 기능을 사용하면 암호화 update ZIP을 만들 수 있습니다. ZIP은 저장소에 직접 쓰거나 GitHub token을 보관하지 않습니다. 생성된 update는 신뢰 기기에서 검토·적용한 뒤 public guard와 테스트를 통과시켜 배포해야 합니다.
 
-- `PRINT_DRIVE_ROOT`
-- `PRINT_DRIVE_SOURCE_DIR`
-- `PRINT_DRIVE_OUTPUT_DIR`
-- `PRINT_DRIVE_PASSWORD_FILE`
-- `PRINT_DRIVE_PASSPHRASE`
+공용 기기에는 전체 vault passphrase를 입력하지 않는 제한 공유 capability 흐름을 우선합니다. URL fragment의 capability는 서버로 전송되지 않지만, 정적 호스팅만으로 강제 만료·횟수 제한·회수를 보장할 수는 없습니다.
 
-상대경로는 `PRINT_DRIVE_ROOT` 또는 기본 프로젝트 루트 기준으로 해석하고, 절대경로는 그대로 사용합니다.
+제한 공유의 현재 browser decrypt 상한은 encrypted object 256 MiB이며, 이보다 큰 파일의 링크 생성은 UI가 거부합니다.
 
-예시:
+## 5. 검증과 Pages build
 
 ```powershell
-$env:PRINT_DRIVE_SOURCE_DIR = "private_files"
-$env:PRINT_DRIVE_OUTPUT_DIR = "files"
-node encrypt_files.mjs
+npm run check
+npm test
+npm run build
+node scripts/check_dist.mjs
+npm run benchmark
 ```
 
-## 모바일 사용
+- `npm run check`: JavaScript/Python syntax, workflow SHA pin, tracked/history path leak, public output allowlist와 v2 object integrity를 검사합니다.
+- `npm test`: browser/security/crypto test, synthetic temporary Git 장애 주입, encryption smoke test를 실행합니다.
+- `npm run build`: 외부 CSS와 bootstrap을 포함한 local JavaScript dependency graph를 그대로 복사하고 검증된 artifact를 임시 디렉터리에서 만든 뒤 `dist`를 교체합니다.
+- `npm run benchmark`: v2의 100-file 증분 변경, rotation, 101 MiB file 시간·변경량·process high-water RSS를 측정합니다. v1 비교 결과와 해석은 `docs/PERFORMANCE.md`에 있습니다.
+- v2 build는 strict envelope schema와 `objectIndex.version=1`의 path, size, ciphertext SHA-256을 실제 blob과 확인하고 참조된 object만 배포합니다.
+- legacy v1에는 공개 object index가 없어 manifest-to-blob 참조를 증명할 수 없습니다. 호환 build는 target stale 파일은 제거하지만 source blob 전부를 복사하므로 가능한 빨리 v2로 migration해야 합니다.
 
-- 세션 키 유지는 기본 해제입니다.
-- 체크박스 문구는 “공용 PC에서는 체크하지 마세요” 기준으로 안내합니다.
-- 저장되는 것은 비밀번호 문자열이 아니라 복호화 키 바이트이며, `sessionStorage`에만 보관됩니다.
-- 10분 동안 사용하지 않으면 자동 잠금됩니다.
-- `잠금` 버튼을 누르면 세션 키가 삭제됩니다.
-- 파일명 검색, 타입 필터, 정렬, 선택 ZIP 다운로드를 사용할 수 있습니다.
+`dist`에는 `index.html`, 외부 CSS/JavaScript와 그 local dependency, PWA asset, `files/manifest.enc`, manifest가 참조하는 `.bin`만 들어갑니다. source에서 삭제된 object가 이전 `dist`에 남지 않도록 매 build를 clean staging에서 만듭니다. browser asset graph와 service worker precache 목록은 테스트에서 정확히 일치해야 합니다.
 
-## 미리보기 제한
+## 6. CI와 GitHub 설정
 
-새 탭 미리보기는 안전한 표시용 타입만 허용합니다.
+Pull request는 verify, dependency review, CodeQL을 실행합니다. `main` deploy workflow는 권한 없는 verify/build job과 `pages:write`·`id-token:write`만 가진 deploy job을 분리합니다. checkout credential은 보존하지 않으며 모든 official action은 full commit SHA로 고정됩니다. Dependabot이 GitHub Actions, npm lock, Python pin을 주기적으로 갱신합니다.
 
-- 허용: `pdf`, `png`, `jpg`, `jpeg`, `webp`, `txt`, `csv`, `md`
-- 다운로드만 허용: `svg`, `html`, `xml`, Office 문서, ZIP과 기타 압축 파일 등
+저장소 관리자가 GitHub UI에서 수동으로 설정해야 할 항목:
 
-## 파일명 권장 규칙
+1. Pages source를 **GitHub Actions**로 선택
+2. `main` branch protection에서 verify, CodeQL, dependency review를 required check로 지정
+3. GitHub Advanced Security를 사용할 수 있다면 secret scanning과 push protection 활성화
+4. `github-pages` environment에 필요한 reviewer/branch protection 적용
+5. workflow가 요청하지 않은 write permission을 받지 않도록 default workflow permission을 read-only로 설정
 
-- 권장: `2026-06-05_회로과제.pdf`
-- 권장: `프린트_자료_1.pdf`
-- 비권장: `#`, `%`, `?` 같은 특수문자가 많은 파일명
+## 7. 공용 기기와 브라우저 보안 한계
 
-원본 파일명은 암호화된 manifest 안에만 들어가므로 공개 저장소에는 노출되지 않습니다.
+- session key 유지는 기본 해제입니다.
+- public-device/capability mode에서는 service worker와 persistent cache를 사용하지 않는 흐름을 우선합니다.
+- 앱의 종료 동작은 앱이 만든 memory key reference, storage, own Cache Storage, service worker registration, object URL, preview DOM, URL fragment만 정리할 수 있습니다.
+- 앱은 브라우저 전체 방문 기록, 다운로드 기록, 운영체제 최근 파일, spooler·printer 기록을 지울 수 없습니다. UI나 문서에서 이를 지웠다고 주장하지 않습니다.
+- HTML, SVG, XML은 inline preview하지 않습니다. 파일명은 text node로 렌더링하고 ZIP entry는 traversal path를 거부합니다.
+- GitHub Pages는 임의의 CSP 외 HTTP response header를 설정할 수 없습니다. 더 강한 Permissions-Policy, framing policy, `X-Content-Type-Options`가 필요하면 header 제어가 가능한 별도 hosting이 필요합니다.
 
-## 알려진 제한
+## 8. 알려진 제한
 
-- 백엔드가 없으므로 접속 시도 횟수 제한, 계정별 권한, 서버 로그 기반 차단은 할 수 없습니다.
-- 비밀번호가 약하면 공격자가 공개 암호문을 내려받아 오프라인 추측 공격을 할 수 있습니다.
-- 이미 Git에 커밋되어 공개된 평문 파일은 현재 파일을 지워도 Git 히스토리에 남을 수 있습니다.
-- 과거 평문까지 없애려면 Git 히스토리 정화와 force push 또는 새 저장소 이전이 필요합니다.
-- 암호화된 파일 크기는 64KB 단위 패딩 때문에 정확한 원본 크기보다 둔감하게 노출됩니다.
-- GitHub Pages 반영은 보통 몇 초에서 수십 초 지연될 수 있습니다.
-- 큰 파일이나 아주 많은 파일은 브라우저 복호화와 ZIP 생성이 느릴 수 있습니다.
+- backend가 없으므로 login attempt rate limit, 계정별 권한, server-enforced capability expiry/revocation을 제공하지 않습니다.
+- 암호문은 공개되므로 약한 passphrase에 대한 offline guessing을 막을 수 없습니다.
+- Git에서 현재 파일을 삭제해도 과거 commit은 남습니다. history 정화는 backup과 협업자 재동기화가 필요한 파괴적 작업이며 자동 실행하지 않습니다.
+- ZIP 생성은 브라우저 메모리를 사용하므로 큰 파일·많은 파일에는 기기 한계가 있습니다.
+- GitHub Pages의 기본 CDN cache와 배포 반영에는 지연이 있을 수 있습니다.
+- `robots.txt`는 검색 엔진에 대한 요청일 뿐 접근 제어가 아닙니다.
