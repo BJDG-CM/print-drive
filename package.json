@@ -13,10 +13,16 @@
     "config:check": "node scripts/config_cli.mjs check",
     "sync:dry-run": "node scripts/config_cli.mjs dry-run",
     "source:relink": "node scripts/relink_source.mjs",
+    "portable:build": "node scripts/build_portable.mjs",
+    "portable:test": "node scripts/test_portable.mjs",
     "design:fixture": "node scripts/create_design_fixture.mjs",
     "benchmark": "node scripts/benchmark_v2.mjs --full",
     "benchmark:quick": "node scripts/benchmark_v2.mjs",
     "update:check": "node scripts/apply_update.mjs --dry-run",
     "update:apply": "node scripts/apply_update.mjs --apply"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.1",
+    "postject": "1.0.0-alpha.6"
   }
 }

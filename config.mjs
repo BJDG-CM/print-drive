@@ -156,7 +156,10 @@ export function validatePathPolicy({ projectRoot, sourceDirectory, encryptedOutp
 
     const ignoredSourceRoots = [
         canonicalizePath(path.join(root, DEFAULT_CONFIG.sourceDirectory)),
-        canonicalizePath(path.join(root, '.tmp'))
+        canonicalizePath(path.join(root, '.tmp')),
+        ...(process.env.PRINT_DRIVE_PORTABLE_MODE === '1'
+            ? [canonicalizePath(path.join(root, 'Workspace'))]
+            : [])
     ];
     const sourceIsIgnored = ignoredSourceRoots.some((ignoredRoot) =>
         samePath(source, ignoredRoot) || isInside(ignoredRoot, source));

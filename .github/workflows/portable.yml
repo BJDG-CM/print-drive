@@ -1,0 +1,41 @@
+name: Build portable updater
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["portable-v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  windows-x64:
+    runs-on: windows-2025
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout source without persisted credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Setup pinned Node runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24.12.0"
+          cache: npm
+      - name: Install locked build dependencies
+        run: npm ci --ignore-scripts
+      - name: Build Windows x64 SEA archive and checksum
+        run: npm run portable:build
+      - name: Prove native package starts without PATH tools
+        run: npm run portable:test
+      - name: Scan package for tracked secrets and plaintext fixtures
+        run: npm run check
+      - name: Upload Windows x64 portable artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: PrintDrive-Portable-windows-x64
+          path: |
+            artifacts/PrintDrive-Portable-windows-x64.zip
+            artifacts/PrintDrive-Portable-windows-x64.zip.sha256
+          if-no-files-found: error

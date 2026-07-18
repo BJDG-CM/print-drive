@@ -1,6 +1,8 @@
 __pycache__/
 .tmp/
 dist/
+artifacts/
+node_modules/
 screenshots/
 *.pyc
 .DS_Store
