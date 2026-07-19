@@ -13,6 +13,7 @@
     "config:check": "node scripts/config_cli.mjs check",
     "sync:dry-run": "node scripts/config_cli.mjs dry-run",
     "source:relink": "node scripts/relink_source.mjs",
+    "source:restore": "node scripts/restore_source.mjs",
     "portable:build": "node scripts/build_portable.mjs",
     "portable:test": "node scripts/test_portable.mjs",
     "design:fixture": "node scripts/create_design_fixture.mjs",
