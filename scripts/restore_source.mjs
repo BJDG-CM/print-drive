@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { access, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -73,7 +73,7 @@ export async function restoreSource(args = process.argv.slice(2)) {
     }
 }
 
-function verifyExactMatch(sourceFiles, remoteFiles) {
+export function verifyExactMatch(sourceFiles, remoteFiles) {
     const local = new Map(sourceFiles.map((file) => [file.relativePath, file]));
     if (local.size !== remoteFiles.length) {
         throw new Error(`Restored file count mismatch: expected ${remoteFiles.length}, found ${local.size}.`);
