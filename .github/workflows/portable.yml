@@ -1,4 +1,4 @@
-name: Build portable updater
+name: Build legacy owner-only portable updater
 
 on:
   workflow_dispatch:

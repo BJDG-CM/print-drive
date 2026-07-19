@@ -4,6 +4,21 @@ Print Drive는 개인 기기에서 준비한 파일을 학교·도서관 같은 
 
 이 구조가 숨기지 못하는 정보도 있습니다. 저장소와 Pages 방문 여부, 암호문 개수·크기·변경 시각, Git 이력은 공개될 수 있습니다. 약한 passphrase에는 오프라인 추측 공격이 가능합니다.
 
+## 저장소 역할
+
+**BJDG-CM/print-drive is a deployed personal Print Drive instance.**
+
+이 저장소는 소유자의 기존 password-protected Pages 앱, 현재 암호화 vault, 로컬 동기화와 암호화 갱신 흐름만 운영합니다. 범용 설치기, 신규 사용자 onboarding 앱, 저장소 template이 아닙니다. 현재 vault ID와 key를 유지하고, `files/manifest.enc` 및 `files/*.bin`은 확인된 운영 결함을 복구하는 경우가 아니면 다시 만들거나 수정하지 않습니다.
+
+재사용 가능한 구성 요소는 별도 프로젝트로 분리될 예정이며, 이 저장소의 코드가 해당 저장소의 존재를 전제로 하지는 않습니다.
+
+```text
+BJDG-CM/print-drive-template
+BJDG-CM/print-drive-manager
+```
+
+제품 경계와 향후 migration 안전 규칙은 `docs/PRODUCT_BOUNDARY.md`에 고정합니다.
+
 ## 요구 사항
 
 - Node.js 24
@@ -11,7 +26,7 @@ Print Drive는 개인 기기에서 준비한 파일을 학교·도서관 같은 
 - Git
 - Web Crypto API를 지원하는 최신 브라우저
 
-Windows 10/11 x64 휴대형 업데이터 사용자는 위 개발 도구를 설치하지 않아도 됩니다. 저장소 빌드·운영자에게만 필요합니다.
+기존 Windows 10/11 x64 휴대형 업데이터는 이 인스턴스 소유자만을 위한 legacy compatibility 도구입니다. 일반 방문자나 다른 저장소를 위한 설치기로 제공하지 않습니다.
 
 ```powershell
 npm ci --ignore-scripts
@@ -20,7 +35,9 @@ python -m pip install -r requirements.txt
 
 평소 흐름은 `source 폴더 설정 → 암호화/동기화 실행 → 사이트 열기 → 잠금 해제 → 미리보기 또는 인쇄`입니다. 일반 주소는 별도 모드 선택 없이 비밀번호 화면으로 바로 열리고, 선택 파일 공유 주소는 전체 파일 비밀번호 화면을 거치지 않습니다.
 
-## 1. 로컬 설정
+## 1. 소유자 전용 로컬 운영 설정
+
+아래 명령은 이미 운영 중인 이 인스턴스의 소유자 workstation을 복구하거나 다시 연결할 때만 사용합니다. 새 Print Drive를 만들거나 다른 사용자를 onboarding하는 절차가 아닙니다.
 
 원본 source는 외부 절대경로를 사용할 수 있습니다. 암호문 output은 저장소 내부여야 하며 저장소 root, `dist`, `.git`, `node_modules`, source와 동일하거나 중첩된 경로는 거부됩니다. Git에서 ignore되는 경로를 output으로 사용하면 자동 commit되지 않으므로 `files` 같은 tracked 경로를 사용하세요.
 
@@ -32,7 +49,7 @@ node scripts/config_cli.mjs setup `
   --remote "origin"
 ```
 
-명령은 `print-drive.config.json`과 필요한 디렉터리를 만듭니다. 실제 config는 machine-local 경로를 포함하므로 Git에서 제외됩니다. 공유 가능한 예시는 `print-drive.config.json.example`, 형식은 `print-drive.config.schema.json`에 있습니다.
+명령은 소유자의 local `print-drive.config.json`과 필요한 디렉터리를 복구합니다. 실제 config는 machine-local 경로를 포함하므로 Git에서 제외됩니다. tracked example과 schema는 이 인스턴스의 기존 운영 흐름을 검증하기 위한 것이며 범용 onboarding 계약이 아닙니다.
 
 허용되는 key는 다음 다섯 개뿐입니다.
 
@@ -69,15 +86,15 @@ npm run source:relink -- --source "D:/PrintDrive-Inbox"
 
 완전 일치할 때만 `--adopt`로 state/config를 재구축할 수 있습니다. `--add-replace`는 원격 전용 파일을 보존하고, `--mirror`는 명시적 확인 뒤 source와 같게 만듭니다. vault ID가 예상과 다른 경우에는 중단합니다. 자세한 분류와 복구는 `docs/OPERATIONS.md`와 `docs/RECOVERY.md`를 따르세요.
 
-## 2. 최초 암호화와 v1 migration
+## 2. 기존 vault 유지와 migration 기록
 
-새 v2 vault와 강한 local passphrase 파일을 만듭니다.
+이 저장소의 production vault는 이미 존재합니다. 이 인스턴스에서 신규 vault 초기화 명령을 실행하거나 vault key/ID를 교체하지 마세요. 다음 명령은 새 배포를 만드는 일반 사용법으로 제공하지 않으며, 별도 backup과 명시적인 복구 계획이 있는 과거-format 복구에만 해당합니다.
 
 ```powershell
 node encrypt_files.mjs --init-passphrase
 ```
 
-기존 v1 vault는 명시적으로 migration합니다. 원본과 현재 암호문을 백업하고 먼저 `docs/RECOVERY.md`를 읽으세요.
+과거 v1 vault migration 절차는 기록과 복구 호환성을 위해 남아 있습니다. 원본과 현재 암호문을 백업하고 먼저 `docs/RECOVERY.md`를 읽으세요.
 
 ```powershell
 node encrypt_files.mjs --migrate-v1
@@ -134,15 +151,15 @@ python auto_sync.py
 
 상세 운영과 복구는 `docs/OPERATIONS.md`, `docs/RECOVERY.md`에 있습니다.
 
-## 4. 세 가지 업데이트 흐름
+## 4. 소유자 전용 업데이트 흐름
 
 1. **연결된 관리자 source**: `encrypt_files.mjs` 또는 `auto_sync.py`로 재귀 source를 증분 암호화합니다. 연결이 끊겼으면 `source:relink`로 먼저 분류합니다.
-2. **다른 Windows 관리자 PC**: `PrintDrive-Portable-windows-x64.zip`을 풀고 `Workspace`에 파일을 둔 뒤 실행합니다. 설치된 Node.js/Git/Python 없이 exact Git SHA를 기준으로 암호화 파일만 원자 commit합니다. Device Flow, 충돌, branch-protection PR fallback과 owner 설정은 `docs/PORTABLE_UPDATER.md`를 봅니다.
-3. **웹 브라우저 fallback**: 아래 update ZIP을 만든 뒤 기존 관리자 checkout에서 검사·적용·push합니다.
+2. **Legacy owner-only portable compatibility**: 기존 `PrintDrive-Portable-windows-x64.zip`은 이 저장소와 현재 vault를 위한 호환 도구일 뿐 범용 installer나 권장 Manager가 아닙니다. 기존 Release와 asset은 보존하지만 방문자 UI에서 홍보하지 않습니다. 세부 경계는 `docs/PORTABLE_UPDATER.md`를 봅니다.
+3. **Legacy browser package fallback**: owner-only 관리 화면에서 만든 update ZIP을 기존 관리자 checkout에서 검사·적용·push합니다. 일반 방문 흐름에는 관리 진입점을 표시하지 않습니다.
 
 ### 브라우저 업데이트 패키지
 
-잠금 해제 뒤 `더보기 → 관리`에서 암호화 update ZIP을 만들 수 있습니다. ZIP은 저장소에 직접 쓰거나 GitHub token을 보관하지 않습니다. `print-drive-update.json`, 대상 `manifest.enc`, 새 immutable object만 포함하며 교체된 object는 제거 목록에 기록됩니다.
+브라우저 update ZIP 생성 코드는 기존 호환성을 위해 남지만 기본 방문자 UI에서는 진입점을 표시하지 않습니다. 이 흐름은 소유자가 신뢰 기기에서만 사용하는 legacy fallback입니다. ZIP은 저장소에 직접 쓰거나 GitHub token을 보관하지 않습니다. `print-drive-update.json`, 대상 `manifest.enc`, 새 immutable object만 포함하며 교체된 object는 제거 목록에 기록됩니다.
 
 ```powershell
 npm run update:check -- "C:/Downloads/Print_Drive_Encrypted_Update.zip"
@@ -196,7 +213,7 @@ Pull request는 verify, dependency review, CodeQL을 실행합니다. `main` dep
 3. GitHub Advanced Security를 사용할 수 있다면 secret scanning과 push protection 활성화
 4. `github-pages` environment에 필요한 reviewer/branch protection 적용
 5. workflow가 요청하지 않은 write permission을 받지 않도록 default workflow permission을 read-only로 설정
-6. 휴대형 업데이터용 GitHub App에 Device Flow, 대상 저장소 `Contents: Read and write`, fallback용 `Pull requests: Read and write`만 부여하고 공개 client ID만 workspace 설정에 기록
+6. 기존 owner-only portable compatibility에 사용하는 GitHub App은 이 저장소로만 한정하고, 이를 다른 저장소용 범용 인증 흐름으로 문서화하거나 Pages 앱에 포함하지 않기
 
 ## 7. 공용 기기와 브라우저 보안 한계
 

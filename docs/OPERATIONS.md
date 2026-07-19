@@ -1,5 +1,7 @@
 # Print Drive 운영 절차
 
+이 문서는 `BJDG-CM/print-drive` personal instance 소유자의 기존 운영 흐름만 다룹니다. 범용 설치·repository 생성·사용자 onboarding 절차가 아닙니다. 제품 경계는 `docs/PRODUCT_BOUNDARY.md`를 우선합니다.
+
 ## 안전 경계
 
 - 평문 source와 passphrase는 공개 저장소 밖에 둔다.
@@ -8,7 +10,9 @@
 - sync 오류를 해결하기 위해 force push, 자동 merge, 자동 rebase를 사용하지 않는다.
 - 실제 config에는 password, token, PAT를 기록하지 않는다.
 
-## 초기 setup
+## 기존 소유자 workstation setup 복구
+
+다음 명령은 현재 vault에 연결된 소유자 환경을 복구할 때만 사용합니다. 새 vault를 만들거나 다른 저장소를 설정하는 onboarding 절차로 사용하지 않습니다.
 
 ```powershell
 npm ci --ignore-scripts

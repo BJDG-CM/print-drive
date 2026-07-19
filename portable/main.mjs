@@ -143,7 +143,7 @@ async function runSmokeTest() {
     const decrypted = decryptAesGcm(key, iv, encrypted, 'print-drive:portable:smoke');
     const cryptoCycle = decrypted.equals(plaintext) && /^[0-9a-f]{64}$/.test(createHash('sha256').update(decrypted).digest('hex'));
     key.fill(0); iv.fill(0); plaintext.fill(0); encrypted.fill(0); decrypted.fill(0);
-    const bundledAssets = renderPortableUi('smoke-nonce').includes('Print Drive 휴대형 업데이터');
+    const bundledAssets = renderPortableUi('smoke-nonce').includes('Print Drive legacy owner-only 업데이터');
     const result = { started: true, bundledAssets, cryptoCycle, systemNodeRequired: false, systemGitRequired: false, pythonRequired: false };
     console.log(JSON.stringify(result));
     return result;
