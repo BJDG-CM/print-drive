@@ -817,13 +817,10 @@ export async function readResponseBytesBounded(response, maxBytes, options = {})
         options.errorCode || 'BROWSER_SIZE_LIMIT',
         options.errorMessage || '네트워크 응답이 허용 크기를 초과했습니다.'
     );
-    const contentLengthHeader = response.headers?.get?.('content-length');
-    if (contentLengthHeader !== null && contentLengthHeader !== undefined) {
-        const contentLength = Number(contentLengthHeader);
-        if (!Number.isSafeInteger(contentLength) || contentLength < 0 || contentLength > maxBytes) {
-            throw fail();
-        }
-    }
+    // Content-Length is not trusted: fetch() decodes gzip/Brotli/CDN transfer encodings
+    // before exposing response.body, so the header can report the encoded size, which for
+    // barely-compressible ciphertext may exceed the decoded encryptedSize. The streaming
+    // loop below bounds the actual decoded bytes, and the caller enforces the exact size.
     const reader = response.body?.getReader?.();
     if (!reader) {
         throw new PrintDriveCryptoError(

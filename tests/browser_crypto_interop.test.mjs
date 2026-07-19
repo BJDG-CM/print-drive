@@ -43,19 +43,19 @@ const DATA_IV = Buffer.alloc(12, 0x71);
 const WRAP_IV = Buffer.alloc(12, 0x72);
 const MANIFEST_IV = Buffer.alloc(12, 0x73);
 
-function createNodeFixture() {
-    const sha256 = nodeSha256Hex(PLAINTEXT);
+function createNodeFixture(plaintext = PLAINTEXT) {
+    const sha256 = nodeSha256Hex(plaintext);
     const descriptor = {
         logicalId: LOGICAL_ID,
         blobId: BLOB_ID,
-        size: PLAINTEXT.byteLength,
-        paddedSize: PLAINTEXT.byteLength,
+        size: plaintext.byteLength,
+        paddedSize: plaintext.byteLength,
         sha256
     };
     const encrypted = encryptNodeAesGcm(
         DEK,
         DATA_IV,
-        PLAINTEXT,
+        plaintext,
         createNodeFileAad(VAULT_ID, descriptor)
     );
     const { dekWrapKey } = deriveNodeSubkeys(VAULT_KEY, VAULT_ID);
@@ -162,6 +162,90 @@ test('bounded response reader cancels a headerless stream as soon as the limit i
         (error) => error.code === 'INTEGRITY_FAILED'
     );
     assert.equal(cancelled, true);
+});
+
+// Fully controlled response so a Content-Length header can differ from the actual body
+// length, which real fetch() does when the transport applied gzip/Brotli/CDN encoding.
+function makeMockResponse(bodyBytes, { contentLength, contentEncoding } = {}) {
+    const headers = new Map();
+    if (contentLength !== undefined) headers.set('content-length', String(contentLength));
+    if (contentEncoding !== undefined) headers.set('content-encoding', contentEncoding);
+    return {
+        ok: true,
+        status: 200,
+        headers: {
+            get: (name) => {
+                const key = String(name).toLowerCase();
+                return headers.has(key) ? headers.get(key) : null;
+            }
+        },
+        body: new ReadableStream({
+            start(controller) {
+                controller.enqueue(bodyBytes);
+                controller.close();
+            }
+        })
+    };
+}
+
+test('browser tolerates a Content-Length larger than the decoded ciphertext', async () => {
+    // 64 KiB plaintext -> 65,552-byte AES-GCM ciphertext (paddedSize + 16 tag).
+    const largePlaintext = Buffer.alloc(65_536, 0x41);
+    const fixture = createNodeFixture(largePlaintext);
+    assert.equal(fixture.encrypted.byteLength, 65_552);
+    assert.equal(fixture.file.encryptedSize, 65_552);
+
+    const context = await unlockVault(PASSWORD, fixture.envelope);
+    const originalFetch = globalThis.fetch;
+    // Transfer-encoded response: header reports the encoded size, larger than the decoded body.
+    globalThis.fetch = async () => makeMockResponse(new Uint8Array(fixture.encrypted), {
+        contentLength: 65_580,
+        contentEncoding: 'gzip'
+    });
+    try {
+        const decrypted = await fetchAndDecryptFile(fixture.file, context);
+        assert.equal(Buffer.compare(Buffer.from(decrypted.bytes), largePlaintext), 0);
+    } finally {
+        globalThis.fetch = originalFetch;
+        context.rawKeyBytes.fill(0);
+    }
+});
+
+test('browser aborts when the decoded body exceeds encryptedSize by one byte', async () => {
+    const fixture = createNodeFixture(Buffer.alloc(65_536, 0x41));
+    const context = await unlockVault(PASSWORD, fixture.envelope);
+    const oversized = new Uint8Array(fixture.encrypted.byteLength + 1);
+    oversized.set(fixture.encrypted, 0);
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => makeMockResponse(oversized, { contentLength: oversized.byteLength });
+    try {
+        await assert.rejects(
+            () => fetchAndDecryptFile(fixture.file, context),
+            (error) => error.code === 'CIPHERTEXT_SIZE_MISMATCH'
+        );
+    } finally {
+        globalThis.fetch = originalFetch;
+        context.rawKeyBytes.fill(0);
+    }
+});
+
+test('browser rejects a decoded body one byte short of encryptedSize', async () => {
+    const fixture = createNodeFixture(Buffer.alloc(65_536, 0x41));
+    const context = await unlockVault(PASSWORD, fixture.envelope);
+    const undersized = fixture.encrypted.subarray(0, fixture.encrypted.byteLength - 1);
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => makeMockResponse(new Uint8Array(undersized), { contentLength: undersized.byteLength });
+    try {
+        await assert.rejects(
+            () => fetchAndDecryptFile(fixture.file, context),
+            (error) => error.code === 'CIPHERTEXT_SIZE_MISMATCH'
+        );
+    } finally {
+        globalThis.fetch = originalFetch;
+        context.rawKeyBytes.fill(0);
+    }
 });
 
 test('Node decrypts browser-created v2 blob and manifest', async () => {
