@@ -1,8 +1,14 @@
-# Print Drive 휴대형 업데이터
+# Legacy owner-only Print Drive 휴대형 업데이터
 
-`PrintDrive-Portable-windows-x64.zip`은 Windows 10/11 x64에서 설치된 Node.js, Git, Python 없이 실행되는 관리자용 패키지다. `Workspace`의 평문을 로컬에서 암호화하고 GitHub에는 `files/manifest.enc`와 `files/<blob-id>.bin`만 전송한다. 평문, vault 비밀번호, GitHub token은 저장소나 설정 파일에 기록하지 않는다.
+이 문서는 `BJDG-CM/print-drive` 소유자의 기존 호환 도구만 설명합니다. 이 패키지는 범용 Print Drive installer나 권장 Manager가 아니며 임의 GitHub 저장소 지원을 주장하지 않습니다. 일반 방문자 UI에서 다운로드 링크를 제공하지 않습니다. 기존 Release와 asset은 역사적·운영 호환성을 위해 그대로 보존합니다.
 
-## 저장소 관리자 최초 설정
+새로운 Manager 개발은 이 저장소에서 진행하지 않습니다. 관리 프로그램은 별도 `BJDG-CM/print-drive-manager` 프로젝트로 제공될 예정이지만, 현재 코드는 그 저장소가 이미 존재한다고 가정하지 않습니다.
+
+기존 `PrintDrive-Portable-windows-x64.zip`은 Windows 10/11 x64에서 이 personal instance를 유지하기 위한 owner-only 패키지다. `Workspace`의 평문을 로컬에서 암호화하고 GitHub에는 `files/manifest.enc`와 `files/<blob-id>.bin`만 전송한다. 평문, vault 비밀번호, GitHub token은 저장소나 설정 파일에 기록하지 않는다.
+
+## 기존 소유자 설정 복구
+
+이 절차는 새 저장소를 만들거나 사용자를 onboarding하기 위한 것이 아닙니다. 이미 발급·설치된 이 인스턴스의 owner-scoped 설정을 복구할 때만 사용합니다.
 
 1. GitHub App을 만들고 **Device Flow**를 활성화한다. App을 대상 저장소에 설치하고 repository permissions를 `Contents: Read and write`, `Pull requests: Read and write`, 그 밖의 권한은 최소로 둔다.
 2. 공개 값인 App client ID를 `print-drive.workspace.json`의 `oauthClientId`에 넣는다. client secret, token, 비밀번호는 이 파일에 넣지 않는다.

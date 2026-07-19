@@ -68,8 +68,8 @@ test('folder navigation exposes breadcrumbs and preserves logical paths in ZIP e
     assert.match(app, /zipEntryPath\(file, ZIP_FOLDER_NAME\)/);
 });
 
-test('management package creation is separated and uses accurate local-apply labels', () => {
-    assert.match(html, /id="btn-management">관리<\/button>/);
+test('legacy owner management stays outside the default visitor interface', () => {
+    assert.match(html, /id="btn-management"[^>]*hidden[^>]*>관리<\/button>/);
     assert.match(html, /id="management-view"[^>]*hidden/);
     assert.match(html, /id="btn-management-back">← 파일 목록<\/button>/);
     assert.match(app, /dom\.vaultContent\.hidden = true;[\s\S]*dom\.managementView\.hidden = false/);
@@ -79,7 +79,7 @@ test('management package creation is separated and uses accurate local-apply lab
     assert.match(management, /npm run update:apply/);
     assert.match(app, /업데이트 패키지 다운로드 요청됨 · 아직 적용되지 않음/);
     assert.match(app, /name: 'print-drive-update\.json'/);
-    assert.match(management, /최신 휴대형 패키지/);
-    assert.match(management, /웹 보관함은 GitHub token을 요청하거나 저장하지 않습니다/);
+    assert.match(management, /관리 프로그램은 별도 프로젝트로 제공될 예정입니다/);
+    assert.doesNotMatch(management, /<a\b|releases\/latest|최신 휴대형 패키지|Workspace 설정 예시/);
     assert.doesNotMatch(html, /capability|master key|key slot|object index|envelope|\bv[12]\b/i);
 });

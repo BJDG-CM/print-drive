@@ -66,7 +66,8 @@ export async function buildPortable() {
             path.join(packageDirectory, 'print-drive.workspace.json')
         );
         await writeFile(path.join(packageDirectory, 'README.txt'), [
-            'Print Drive 휴대형 업데이터 (Windows 10/11 x64)',
+            'Print Drive legacy owner-only 업데이터 (Windows 10/11 x64)',
+            'BJDG-CM/print-drive의 기존 소유자 호환 도구이며 범용 installer가 아닙니다.',
             '',
             '1. Workspace 폴더에 업데이트할 평문 파일과 폴더를 넣습니다.',
             '2. PrintDriveUpdater.exe를 실행합니다.',
