@@ -10,7 +10,7 @@ Print Drive는 개인 기기에서 준비한 파일을 학교·도서관 같은 
 
 이 저장소는 소유자의 기존 password-protected Pages 앱, 현재 암호화 vault, 로컬 동기화와 암호화 갱신 흐름만 운영합니다. 범용 설치기, 신규 사용자 onboarding 앱, 저장소 template이 아닙니다. 현재 vault ID와 key를 유지하고, `files/manifest.enc` 및 `files/*.bin`은 확인된 운영 결함을 복구하는 경우가 아니면 다시 만들거나 수정하지 않습니다.
 
-재사용 가능한 구성 요소는 별도 프로젝트로 분리될 예정이며, 이 저장소의 코드가 해당 저장소의 존재를 전제로 하지는 않습니다.
+재사용 가능한 구성 요소는 별도 프로젝트로 분리되어 있으며, 이 저장소의 코드가 해당 저장소의 존재를 전제로 하지는 않습니다.
 
 ```text
 BJDG-CM/print-drive-template
