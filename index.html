@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#1d4ed8">
+    <meta name="theme-color" content="#ffffff">
     <meta name="referrer" content="no-referrer">
     <meta name="print-drive-build-id" content="__PRINT_DRIVE_BUILD_ID__">
     <meta http-equiv="Content-Security-Policy"
@@ -24,10 +24,14 @@
     <main class="app-frame" id="app-root">
         <section class="screen-view auth-view" id="auth-view" aria-labelledby="auth-title" hidden>
             <div class="centered-panel auth-panel">
+                <div class="theme-toggle js-theme-toggle auth-theme-toggle" role="group" aria-label="색상 테마">
+                    <button type="button" class="theme-option" data-theme-value="system" aria-pressed="true">시스템</button>
+                    <button type="button" class="theme-option" data-theme-value="light" aria-pressed="false">라이트</button>
+                    <button type="button" class="theme-option" data-theme-value="dark" aria-pressed="false">다크</button>
+                </div>
                 <div class="entry-brand small" aria-hidden="true">PD</div>
                 <div class="entry-heading">
-                    <p class="eyebrow">PRINT DRIVE</p>
-                    <h1 id="auth-title">전체 파일 열기</h1>
+                    <h1 id="auth-title">전체 보관함 열기</h1>
                     <p>전체 파일을 열려면 비밀번호를 입력하세요.</p>
                 </div>
                 <p class="legacy-link-warning" id="legacy-link-warning" role="note" hidden>이전 형식의 파일 링크입니다. 전체 파일 비밀번호가 필요합니다.</p>
@@ -40,14 +44,14 @@
                     </div>
                     <label class="remember-row">
                         <input id="remember-session" type="checkbox">
-                        <span>이 탭에서 새로고침해도 세션 유지 <small>공용 기기에서는 선택하지 마세요</small></span>
+                        <span>이 탭에서 세션 유지 <small>공용 기기에서는 선택하지 마세요</small></span>
                     </label>
                     <p class="form-message" id="auth-error" role="alert" hidden></p>
                 </form>
-                <p class="public-password-warning">공용 기기에서는 전체 파일 비밀번호를 입력하지 마세요.</p>
+                <p class="entry-caution">공용 기기에서는 공유 링크를 사용하세요.</p>
                 <details class="auth-help">
                     <summary>공유 링크 도움말</summary>
-                    <p>새 공유 링크에서는 선택한 파일만 비밀번호 없이 열립니다. 이전 형식의 파일 링크는 전체 파일 비밀번호가 필요합니다.</p>
+                    <p>새 공유 링크에서는 선택한 파일만 비밀번호 없이 열립니다. 이전 형식의 파일 링크는 전체 파일 비밀번호가 필요합니다. 공용 기기에서는 전체 파일 비밀번호를 입력하지 마세요.</p>
                 </details>
             </div>
         </section>
@@ -132,6 +136,11 @@
                     </div>
                 </div>
                 <div class="header-actions" aria-label="보관함 작업">
+                    <div class="theme-toggle js-theme-toggle vault-theme-toggle" role="group" aria-label="색상 테마">
+                        <button type="button" class="theme-option" data-theme-value="system" aria-pressed="true">시스템</button>
+                        <button type="button" class="theme-option" data-theme-value="light" aria-pressed="false">라이트</button>
+                        <button type="button" class="theme-option" data-theme-value="dark" aria-pressed="false">다크</button>
+                    </div>
                     <details class="overflow-menu">
                         <summary>더보기</summary>
                         <div class="overflow-menu-panel">

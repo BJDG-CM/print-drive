@@ -1,4 +1,9 @@
 (() => {
+    // Apply the stored theme before app.js loads so a reload does not flash the wrong
+    // colors. This mirrors theme.js (same key, values, and resolved colors) but stays
+    // inline because bootstrap.js is a classic script and cannot use import statements.
+    applyStoredThemeEarly();
+
     let pendingShareFragment = '';
     const captureShareFragment = () => {
         if (location.hash.startsWith('#share=')) {
@@ -82,13 +87,54 @@
             }
         });
 
+    function applyStoredThemeEarly() {
+        const values = ['system', 'light', 'dark'];
+        const readStored = () => {
+            try {
+                const raw = localStorage.getItem('print-drive-theme');
+                return values.includes(raw) ? raw : 'system';
+            } catch {
+                return 'system';
+            }
+        };
+        const prefersDark = () => {
+            try {
+                return window.matchMedia('(prefers-color-scheme: dark)').matches;
+            } catch {
+                return false;
+            }
+        };
+        const paintMeta = (theme) => {
+            const resolved = theme === 'system' ? (prefersDark() ? 'dark' : 'light') : theme;
+            const meta = document.querySelector('meta[name="theme-color"]');
+            if (meta) {
+                meta.setAttribute('content', resolved === 'dark' ? '#111827' : '#ffffff');
+            }
+        };
+        try {
+            const stored = readStored();
+            document.documentElement.setAttribute('data-theme', stored);
+            paintMeta(stored);
+            // Keep the browser theme-color in sync while the OS theme changes in 'system'
+            // mode; CSS already recolors instantly through prefers-color-scheme.
+            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+                if (readStored() === 'system') {
+                    paintMeta('system');
+                }
+            });
+        } catch {
+            // A blocked DOM or storage API leaves the CSS default in place.
+        }
+    }
+
     function clearOwnedStorage(environment, property) {
         try {
             const storage = environment[property];
             const owned = [];
             for (let index = 0; index < storage.length; index += 1) {
                 const key = storage.key(index);
-                if (key?.startsWith('print-drive-')) {
+                // The theme mode is a non-sensitive display preference and is kept.
+                if (key?.startsWith('print-drive-') && key !== 'print-drive-theme') {
                     owned.push(key);
                 }
             }

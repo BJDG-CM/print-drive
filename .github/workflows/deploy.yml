@@ -8,13 +8,92 @@ on:
 permissions:
   contents: read
 
+# Cancel an older, still-running deploy for this ref as soon as a newer push starts,
+# so only the latest commit is ever published and no stale artifact wins a race.
 concurrency:
   group: "pages-${{ github.ref }}"
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
-  verify-build:
+  classify:
     if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      content_only: ${{ steps.classify.outputs.content_only }}
+    steps:
+      - name: Checkout full history for change classification
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Classify changed paths
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          content_only=false
+          zero="0000000000000000000000000000000000000000"
+          if [ "$EVENT_NAME" != "push" ]; then
+            echo "Event '$EVENT_NAME' is not a push: using full verification."
+          elif [ -z "$BEFORE_SHA" ] || [ "$BEFORE_SHA" = "$zero" ]; then
+            echo "No usable before SHA (first push or unknown): using full verification."
+          elif ! git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
+            echo "Before SHA $BEFORE_SHA is not present: using full verification."
+          else
+            # --no-renames so a rename appears as delete(old)+add(new): both paths are
+            # checked, and any path outside files/** (added, modified, or deleted) forces
+            # the full path.
+            changed="$(git diff --no-renames --name-only "$BEFORE_SHA" "$AFTER_SHA")"
+            if [ -z "$changed" ]; then
+              echo "Diff produced no changed files: using full verification."
+            elif printf '%s\n' "$changed" | grep -qvE '^files/'; then
+              echo "Changes reach outside files/**: using full verification."
+              printf '%s\n' "$changed"
+            else
+              echo "Every changed path is under files/**: using the content-only fast path."
+              content_only=true
+            fi
+          fi
+          echo "content_only=$content_only" >> "$GITHUB_OUTPUT"
+
+  # Fast path: only encrypted content under files/** changed. Rebuild and re-verify the
+  # artifact without npm ci, pip install, npm run check, npm test, or full history.
+  # build_dist.mjs and check_dist.mjs use Node built-ins only, so no install is needed.
+  build-content:
+    needs: classify
+    if: needs.classify.outputs.content_only == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Shallow checkout of the latest commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+      - name: Build verified Pages artifact from encrypted content
+        run: node scripts/build_dist.mjs
+      - name: Recheck final artifact contract (envelope, blobs, ciphertext, leaks)
+        run: node scripts/check_dist.mjs
+      - name: Upload verified Pages artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        with:
+          path: dist
+
+  # Full path: any code, CSS, HTML, config, docs, or workflow change, workflow_dispatch,
+  # or an undeterminable change range. Keeps the complete verification baseline.
+  build-full:
+    needs: classify
+    if: needs.classify.outputs.content_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -54,7 +133,14 @@ jobs:
           path: dist
 
   deploy:
-    needs: verify-build
+    needs: [classify, build-content, build-full]
+    # Deploy only when the single selected build path produced a verified artifact.
+    # The paths are mutually exclusive, so exactly one of them is 'success' and the
+    # other is 'skipped'. If the selected path fails, no artifact deploys.
+    if: |
+      always() &&
+      needs.classify.result == 'success' &&
+      (needs.build-content.result == 'success' || needs.build-full.result == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: none

@@ -8,6 +8,7 @@ const SHELL_ASSETS = [
     './bootstrap.js',
     './build_identity.js',
     './app.js',
+    './theme.js',
     './crypto.js',
     './file_errors.js',
     './folder_browser.js',

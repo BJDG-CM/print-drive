@@ -20,6 +20,7 @@ test('public-device cleanup removes only Print Drive-owned browser state', async
     });
     const localStorage = createStorage({
         'print-drive-setting': 'value',
+        'print-drive-theme': 'dark',
         unrelated: 'keep'
     });
     const cacheKeys = new Set(['print-drive-shell-v3', 'another-app-cache']);
@@ -53,6 +54,7 @@ test('public-device cleanup removes only Print Drive-owned browser state', async
     assert.equal(sessionStorage.has('print-drive-session-key-v2'), false);
     assert.equal(sessionStorage.has('another-app'), true);
     assert.equal(localStorage.has('print-drive-setting'), false);
+    assert.equal(localStorage.has('print-drive-theme'), true, 'the non-sensitive theme preference is preserved');
     assert.equal(localStorage.has('unrelated'), true);
     assert.deepEqual([...cacheKeys], ['another-app-cache']);
     assert.equal(registration.unregistered, true);

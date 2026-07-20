@@ -68,6 +68,29 @@ test('folder navigation exposes breadcrumbs and preserves logical paths in ZIP e
     assert.match(app, /zipEntryPath\(file, ZIP_FOLDER_NAME\)/);
 });
 
+test('theme controls exist on lock and vault screens and bootstrap applies theme before app import', () => {
+    const toggleVariants = [...html.matchAll(/class="theme-toggle js-theme-toggle ([^"]+)"/g)].map((match) => match[1]);
+    assert.ok(toggleVariants.includes('auth-theme-toggle'), 'lock screen keeps a theme toggle');
+    assert.ok(toggleVariants.includes('vault-theme-toggle'), 'vault header keeps a theme toggle');
+    for (const value of ['system', 'light', 'dark']) {
+        assert.match(html, new RegExp(`data-theme-value="${value}"[^>]*aria-pressed=`));
+    }
+
+    // The stored theme is applied before app.js loads to avoid a color flash on reload.
+    assert.match(bootstrap, /applyStoredThemeEarly\(\)/);
+    assert.ok(
+        bootstrap.indexOf('applyStoredThemeEarly()') < bootstrap.indexOf("import('./app.js')"),
+        'theme must be applied before the app module import'
+    );
+    assert.match(bootstrap, /setAttribute\('data-theme'/);
+    assert.match(bootstrap, /meta\[name="theme-color"\]/);
+
+    // app.js wires the toggles through the shared theme module.
+    assert.match(app, /from '\.\/theme\.js'/);
+    assert.match(app, /setupThemeControls\(\)/);
+    assert.match(app, /initTheme\(reflectThemeSelection\)/);
+});
+
 test('legacy owner management stays outside the default visitor interface', () => {
     assert.match(html, /id="btn-management"[^>]*hidden[^>]*>관리<\/button>/);
     assert.match(html, /id="management-view"[^>]*hidden/);

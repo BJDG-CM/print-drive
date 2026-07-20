@@ -1,6 +1,9 @@
 const STORAGE_PREFIX = 'print-drive-';
 const CACHE_PREFIX = 'print-drive-';
 const KNOWN_DATABASES = ['print-drive-vault-v2', 'print-drive-preview-v1'];
+// Non-sensitive display settings survive public-device cleanup: the theme mode is a
+// preference, never session/vault data, so wiping it would needlessly reset the UI.
+const PRESERVED_STORAGE_KEYS = new Set(['print-drive-theme']);
 
 export async function clearAppManagedBrowserData(environment = globalThis) {
     const report = { cleared: [], failures: [], remaining: [] };
@@ -46,7 +49,7 @@ function clearStorage(storage, label, report) {
         const owned = [];
         for (let index = 0; index < storage.length; index += 1) {
             const key = storage.key(index);
-            if (key?.startsWith(STORAGE_PREFIX)) {
+            if (key?.startsWith(STORAGE_PREFIX) && !PRESERVED_STORAGE_KEYS.has(key)) {
                 owned.push(key);
             }
         }

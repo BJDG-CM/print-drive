@@ -1,4 +1,13 @@
+/* 공통 토큰: 테마와 무관한 구조 값만 둔다. 색상은 아래 light/dark 블록에서만 정의한다. */
 :root {
+    --radius-sm: 9px;
+    --radius-md: 14px;
+    --radius-lg: 18px;
+}
+
+/* 명시적 light 토큰 (기본값). data-theme 미설정 상태도 여기서 시작한다. */
+:root,
+:root[data-theme="light"] {
     color-scheme: light;
     --bg: #eef2f7;
     --surface: #ffffff;
@@ -27,13 +36,44 @@
     --selected: #eff6ff;
     --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.08);
     --shadow-md: 0 18px 48px rgba(15, 23, 42, 0.18);
-    --radius-sm: 9px;
-    --radius-md: 14px;
-    --radius-lg: 18px;
 }
 
+/* 명시적 dark 토큰: 사용자가 다크를 선택하면 OS 설정과 무관하게 유지된다. */
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #080d18;
+    --surface: #111827;
+    --surface-muted: #182235;
+    --surface-strong: #243148;
+    --border: #3a4962;
+    --border-subtle: #28364d;
+    --text: #f1f5f9;
+    --text-muted: #b4c0d4;
+    --primary: #2f6fed;
+    --primary-hover: #245fd4;
+    --primary-soft: #172b4d;
+    --primary-soft-text: #a9c7ff;
+    --accent: #2dd4bf;
+    --accent-soft: #123d38;
+    --danger: #dc2626;
+    --danger-hover: #b91c1c;
+    --danger-soft: #3d1d24;
+    --warning: #fbbf24;
+    --warning-soft: #3b2b0c;
+    --focus: #fbbf24;
+    --admin-bg: #030712;
+    --admin-text: #f8fafc;
+    --admin-muted: #cbd5e1;
+    --admin-accent: #fbbf24;
+    --selected: #172554;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 22px 58px rgba(0, 0, 0, 0.52);
+}
+
+/* system(기본) 모드: OS 다크 설정을 실시간으로 따른다. */
 @media (prefers-color-scheme: dark) {
-    :root {
+    :root[data-theme="system"],
+    :root:not([data-theme]) {
         color-scheme: dark;
         --bg: #080d18;
         --surface: #111827;
@@ -389,6 +429,51 @@ code {
     margin: 0;
     color: var(--text-muted);
     font-size: 0.82rem;
+}
+
+.entry-caution {
+    text-align: center;
+}
+
+/* Theme toggle: a compact segmented control reused on the lock and vault screens. */
+.theme-toggle {
+    display: inline-flex;
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    gap: 2px;
+    max-width: 100%;
+    padding: 3px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface-muted);
+}
+
+.theme-toggle .theme-option {
+    min-height: 38px;
+    min-width: 0;
+    padding: 0.3rem 0.75rem;
+    border: 0;
+    border-radius: 999px;
+    color: var(--text-muted);
+    background: transparent;
+    font-size: 0.8rem;
+    font-weight: 750;
+    box-shadow: none;
+}
+
+.theme-toggle .theme-option:hover:not(:disabled) {
+    color: var(--primary-soft-text);
+    background: transparent;
+}
+
+.theme-toggle .theme-option[aria-pressed="true"] {
+    color: var(--text);
+    background: var(--surface);
+    box-shadow: var(--shadow-sm);
+}
+
+.auth-theme-toggle {
+    justify-self: end;
 }
 
 .back-button {

@@ -41,6 +41,7 @@ import {
     zipEntryPath
 } from './folder_browser.js';
 import { drawQrCode } from './qr.js';
+import { initTheme, setTheme } from './theme.js';
 
 const MANIFEST_URL = 'files/manifest.enc';
 const SESSION_KEY = 'print-drive-session-key-v2';
@@ -209,6 +210,7 @@ export function startPrintDrive(shareFragment = '') {
 
 function init() {
     bindEvents();
+    setupThemeControls();
     setButtonContent(dom.refreshButton, 'refresh', '새로고침');
     setButtonContent(dom.pageQrButton, 'qr', 'QR');
     setButtonContent(dom.installButton, 'plus', '설치');
@@ -341,6 +343,24 @@ function bindIdleLockEvents() {
         if (!document.hidden) {
             enforceActivityDeadlines();
         }
+    });
+}
+
+function setupThemeControls() {
+    document.querySelectorAll('.js-theme-toggle').forEach((group) => {
+        group.addEventListener('click', (event) => {
+            const option = event.target.closest('.theme-option');
+            if (option && group.contains(option)) {
+                setTheme(option.dataset.themeValue);
+            }
+        });
+    });
+    initTheme(reflectThemeSelection);
+}
+
+function reflectThemeSelection(theme) {
+    document.querySelectorAll('.js-theme-toggle .theme-option').forEach((option) => {
+        option.setAttribute('aria-pressed', String(option.dataset.themeValue === theme));
     });
 }
 
