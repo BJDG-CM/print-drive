@@ -1,0 +1,11 @@
+{
+  "formatVersion": 1,
+  "application": "print-drive",
+  "initialized": true,
+  "vaultId": "30b516ab734603477370e8446a18e893",
+  "vaultFormatVersion": 2,
+  "owner": "BJDG-CM",
+  "repo": "print-drive",
+  "branch": "main",
+  "pagesUrl": "https://bjdg-cm.github.io/print-drive/"
+}
