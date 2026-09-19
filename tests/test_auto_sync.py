@@ -154,6 +154,22 @@ class AutoSyncGitTests(unittest.TestCase):
         self.assertEqual(handler.ahead_behind(), (0, 0))
         self.assertEqual((self.repo.work / "remote-change.txt").read_text(encoding="utf-8"), "remote\n")
 
+    def test_ahead_only_checkout_is_allowed_and_pushed_instead_of_blocking(self):
+        # A push that did not finish leaves a local output commit ahead of the remote (behind 0).
+        (self.repo.output / "manifest.enc").write_text('{"version":2}\n', encoding="utf-8")
+        self.repo.git(self.repo.work, "add", "--", "files")
+        self.repo.git(self.repo.work, "commit", "-m", "Auto sync: encrypted files updated")
+        handler = self.repo.handler()
+        self.assertEqual(handler.ahead_behind(), (1, 0))
+
+        # Preflight must not refuse a clean ahead-only fast-forward; it lets the pass continue.
+        handler.prepare_remote_base()
+        self.assertEqual(handler.ahead_behind(), (1, 0))
+
+        # The stuck commit is pushed on this pass, clearing the backlog automatically.
+        handler.sync_to_github()
+        self.assertEqual(handler.ahead_behind(), (0, 0))
+
     def test_remote_preflight_refuses_dirty_and_diverged_checkouts(self):
         handler = self.repo.handler()
         (self.repo.work / "notes.txt").write_text("dirty\n", encoding="utf-8")

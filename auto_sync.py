@@ -143,10 +143,10 @@ def display_path(project_root, path_value):
 
 
 class RepositorySyncLock:
-    def __init__(self, repository_root, stale_seconds=SYNC_LOCK_STALE_SECONDS):
+    def __init__(self, repository_root, stale_seconds=SYNC_LOCK_STALE_SECONDS, lock_name="print-drive-sync.lock"):
         repository_root = Path(repository_root)
         git_path_result = subprocess.run(
-            ["git", "rev-parse", "--git-path", "print-drive-sync.lock"],
+            ["git", "rev-parse", "--git-path", lock_name],
             cwd=repository_root,
             check=False,
             capture_output=True,
@@ -158,7 +158,7 @@ class RepositorySyncLock:
             candidate = Path(git_path_result.stdout.strip())
             self.path = candidate if candidate.is_absolute() else repository_root / candidate
         else:
-            self.path = repository_root / ".git" / "print-drive-sync.lock"
+            self.path = repository_root / ".git" / lock_name
         self.stale_seconds = stale_seconds
         self.acquired = False
 
@@ -492,7 +492,8 @@ class SyncHandler(FileSystemEventHandler):
         self.git_pathspec()
 
     def prepare_remote_base(self):
-        """Fast-forward a clean, behind-only checkout before any encryption work."""
+        """Prepare a clean checkout before encryption: fast-forward when behind, allow an
+        ahead-only state (it is pushed later), and refuse only on divergence or a dirty tree."""
         self.validate_git_context()
         fetch_result = self.run_git([
             "fetch",
@@ -517,8 +518,12 @@ class SyncHandler(FileSystemEventHandler):
                 "Local and remote branches have diverged. No merge, rebase, encryption, or force push was attempted."
             )
         if ahead > 0:
-            raise NonFastForwardError(
-                f"The local branch is {ahead} commit(s) ahead. Push or review those commits before auto-sync encrypts new files."
+            # Ahead-only (behind == 0) is a clean fast-forward, not a hazard. A push that did
+            # not finish leaves the local output commit here; continue so this pass re-pushes it
+            # via sync_to_github instead of blocking every future change until a manual push.
+            print(
+                f"Local branch is {ahead} commit(s) ahead of {self.remote}/{self.allowed_branch}; "
+                "it will be pushed after this sync pass."
             )
         if behind > 0:
             result = self.run_git(["merge", "--ff-only", "@{upstream}"], check=False)
@@ -695,6 +700,15 @@ def main():
         print("Auto sync is disabled by print-drive.config.json.")
         return 0
 
+    # Single-instance guard: a duplicate watcher (e.g. a second launcher window or a leftover
+    # process from a previous login) races this one over commits and pushes, which is what
+    # produces the repeated "already syncing" / ahead-of-remote churn. Refuse to start a second
+    # live watcher; a stale lock from a crashed watcher is reclaimed automatically.
+    watcher_lock = RepositorySyncLock(base_dir, lock_name="print-drive-watcher.lock")
+    if not watcher_lock.acquire():
+        print("Another Print Drive watcher is already running for this repository; exiting.")
+        return 0
+
     public_dir = Path(config["encryptedOutputDirectory"]).resolve()
     private_dir = Path(config["sourceDirectory"]).resolve()
     passphrase_file = resolve_project_path(base_dir, "PRINT_DRIVE_PASSWORD_FILE", DEFAULT_PASSPHRASE_FILE)
@@ -720,6 +734,8 @@ def main():
         print("\nStopping monitor...")
         event_handler.cancel_pending_sync()
         observer.stop()
+    finally:
+        watcher_lock.release()
     observer.join()
     return 0
 
